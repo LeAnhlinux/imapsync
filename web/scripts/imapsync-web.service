@@ -1,0 +1,15 @@
+[Unit]
+Description=imapsync Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=imapsync
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=__INSTALL_DIR__/.env
+ExecStart=__INSTALL_DIR__/venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

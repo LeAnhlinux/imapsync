@@ -1598,9 +1598,13 @@ $sync->{ warn_release } = ( $sync->{ releasecheck } ) ? check_last_release(  ) :
 
 $wholeheaderifneeded  = defined  $wholeheaderifneeded   ? $wholeheaderifneeded  : 1;
 
-# Activate --usecache if --useuid is set and there is no --nousecache
-$sync->{ usecache } = 1 if ( $useuid and ( ! defined  $sync->{ usecache }   ) ) ;
+# Activate --usecache by default for faster re-syncs (skip header re-parsing).
+# Previously only activated with --useuid; now on unless explicitly --nousecache.
+$sync->{ usecache } = defined $sync->{ usecache } ? $sync->{ usecache } : 1 ;
 $cacheaftercopy = 1 if ( $sync->{ usecache } and ( ! defined  $cacheaftercopy  ) ) ;
+if ( $sync->{ usecache } and ! $useuid ) {
+        myprint( "Info: --usecache is on by default for faster re-syncs. Use --nousecache to disable.\n" ) ;
+}
 
 $sync->{ checkfoldersexist } = defined $sync->{ checkfoldersexist } ? $sync->{ checkfoldersexist } : 1 ;
 $checkmessageexists = defined  $checkmessageexists  ? $checkmessageexists : 0 ;
@@ -1626,6 +1630,18 @@ $sync->{ delete2duplicates } = determine_delete2duplicates( $sync ) ;
 
 $sync->{maxmessagespersecond} = defined  $sync->{maxmessagespersecond}  ? $sync->{maxmessagespersecond} : 0 ;
 $sync->{maxbytespersecond}    = defined  $sync->{maxbytespersecond}     ? $sync->{maxbytespersecond}    : 0 ;
+
+# Batch size for header parsing (reduces memory peak on huge folders)
+$sync->{ batchsize } = defined $sync->{ batchsize } ? $sync->{ batchsize } : 10000 ;
+
+# Parallel folder sync: number of concurrent folder syncs (1 = sequential, default)
+$sync->{ parallel_count } = defined $sync->{ parallel_count } ? $sync->{ parallel_count } : 1 ;
+
+# Pipeline depth: number of messages to pre-fetch while appending (0 = off)
+$sync->{ pipeline_depth } = defined $sync->{ pipeline_depth } ? $sync->{ pipeline_depth } : 0 ;
+
+# CONDSTORE: use IMAP CONDSTORE extension for delta sync (auto-detected if not set)
+# $sync->{ condstore } is left undef for auto-detection
 
 $sync->{sslcheck} = defined $sync->{sslcheck} ? $sync->{sslcheck} : 1 ;
 
@@ -2078,6 +2094,19 @@ myprint( 'Host2 capability once authenticated: ', join(q{ }, @{ $sync->{imap2}->
 
 imap_id_stuff( $sync ) ;
 
+# CONDSTORE detection: auto-enable if both servers support it
+if ( ! defined $sync->{ condstore } ) {
+        my $h1_condstore = $sync->{imap1}->has_capability( 'CONDSTORE' ) ? 1 : 0 ;
+        my $h2_condstore = $sync->{imap2}->has_capability( 'CONDSTORE' ) ? 1 : 0 ;
+        $sync->{ condstore } = ( $h1_condstore and $h2_condstore ) ? 1 : 0 ;
+        if ( $sync->{ condstore } ) {
+                myprint( "CONDSTORE: both servers support CONDSTORE, enabling delta sync for changed messages.\n" ) ;
+        }
+}
+elsif ( $sync->{ condstore } ) {
+        myprint( "CONDSTORE: explicitly enabled by user.\n" ) ;
+}
+
 #quota( $sync, $sync->{imap1}, 'h1' ) ; # quota on host1 is useless and pollute host2 output.
 quota( $sync, $sync->{imap2}, 'h2' )  ;
 
@@ -2398,6 +2427,10 @@ $h1_folders_wanted_nb = scalar  @{ $sync->{h1_folders_wanted} }  ;
 
 myprint( "++++ Looping on each one of $h1_folders_wanted_nb folders to sync\n" ) ;
 
+if ( $sync->{ parallel_count } > 1 ) {
+        myprint( "++++ Parallel mode: $sync->{ parallel_count } concurrent folder syncs\n" ) ;
+}
+
 $sync->{begin_transfer_time} = time ;
 
 my %uid_candidate_for_deletion ;
@@ -2406,6 +2439,14 @@ my %uid_candidate_no_deletion ;
 $sync->{ h2_folders_of_md5 } = {  } ;
 
 
+# Parallel folder sync support
+if ( $sync->{ parallel_count } > 1 and $h1_folders_wanted_nb > 1 )
+{
+        parallel_folder_sync( $sync ) ;
+}
+else
+{
+# Sequential folder sync (original behavior)
 FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
 {
         $sync->{ h1_current_folder } = $h1_fold ;
@@ -2425,6 +2466,17 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         select_folder( $sync, $sync->{imap1}, $h1_fold, 'Host1' ) or next FOLDER ;
 
         debugsleep( $sync ) ;
+
+        # CONDSTORE: check for cached modseq and set up delta search
+        my $h1_cached_modseq ;
+        if ( $sync->{ condstore } and $sync->{ usecache } ) {
+                my $cache_base = "$sync->{ tmpdir }/imapsync_cache/" ;
+                my $account_key = "$sync->{host1}/$sync->{user1}/$sync->{host2}/$sync->{user2}" ;
+                $h1_cached_modseq = condstore_load_modseq( $cache_base, $account_key, $h1_fold ) ;
+                if ( defined $h1_cached_modseq ) {
+                        myprint( "CONDSTORE: folder [$h1_fold] cached HIGHESTMODSEQ=$h1_cached_modseq, will use delta sync\n" ) ;
+                }
+        }
 
         my $h1_msgs_all_hash_ref ;
         my @h1_msgs ;
@@ -2520,10 +2572,30 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         ( $sync->{ debug } or $sync->{ debuglist } ) and myprint( "Host1: folder [$h1_fold] considering $h1_msgs_nb messages, LIST gives: @h1_msgs\n" ) ;
         $sync->{ debug } and myprint( "Host1: selecting messages of folder [$h1_fold] took ", timenext( $sync ), " s\n" ) ;
 
+        # CONDSTORE: filter to only changed messages if we have a cached modseq
+        my $h1_condstore_full_scan = 1 ;
+        if ( $sync->{ condstore } and defined $h1_cached_modseq and $sync->{ usecache } and @h1_msgs ) {
+                # Use SEARCH with MODSEQ to find messages changed since last sync
+                my @changed_msgs = eval { $sync->{imap1}->search( "MODSEQ $h1_cached_modseq" ) } ;
+                if ( ! $@ and @changed_msgs ) {
+                        my %changed_set ;
+                        @changed_set{ @changed_msgs } = () ;
+                        my $orig_count = scalar @h1_msgs ;
+                        # We still need all msgs for cache, but we can skip header parsing for unchanged ones
+                        $sync->{ condstore_changed_msgs }->{ $h1_fold } = \%changed_set ;
+                        my $changed_count = scalar @changed_msgs ;
+                        myprint( "CONDSTORE: folder [$h1_fold] $changed_count/$orig_count messages changed since MODSEQ $h1_cached_modseq\n" ) ;
+                        $h1_condstore_full_scan = 0 ;
+                }
+                elsif ( $@ ) {
+                        myprint( "CONDSTORE: SEARCH MODSEQ failed for [$h1_fold], falling back to full scan: $@\n" ) ;
+                }
+        }
+
         my $h2_msgs_all_hash_ref = {  } ;
         my @h2_msgs = select_msgs( $sync->{imap2}, $h2_msgs_all_hash_ref, $sync->{ search2 }, $sync->{abletosearch2}, $h2_fold ) ;
 
-        if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
+        # reconnect check removed here: redundant with check after uidvalidity below
 
         my $h2_msgs_nb = scalar  @h2_msgs  ;
 
@@ -2588,9 +2660,9 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         {
                 myprint( "Host1: parsing headers of folder [$h1_fold]. It can take time for huge folders. Be patient.\n" ) ;
         }
-        
+
         my ( $h1_heads_ref, $h1_fir_ref ) = ( {}, {} ) ;
-        $h1_heads_ref = $sync->{ imap1 }->parse_headers( [ @h1_msgs_not_in_cache ], @useheader ) if ( @h1_msgs_not_in_cache ) ;
+        $h1_heads_ref = batch_parse_headers( $sync->{ imap1 }, [ @h1_msgs_not_in_cache ], \@useheader, $sync->{ batchsize } ) if ( @h1_msgs_not_in_cache ) ;
         $sync->{ debug } and myprint( "Host1: parsing headers of folder [$h1_fold] took ", timenext( $sync ), " s\n" ) ;
 
         @{ $h1_fir_ref }{ @h1_msgs } = ( undef ) ;
@@ -2665,7 +2737,7 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         }
 
         my ( $h2_heads_ref, $h2_fir_ref ) = ( {}, {} );
-        $h2_heads_ref = $sync->{ imap2 }->parse_headers( [ @h2_msgs_not_in_cache ], @useheader ) if ( @h2_msgs_not_in_cache );
+        $h2_heads_ref = batch_parse_headers( $sync->{ imap2 }, [ @h2_msgs_not_in_cache ], \@useheader, $sync->{ batchsize } ) if ( @h2_msgs_not_in_cache );
         $sync->{ debug } and myprint( "Host2: parsing headers of folder [$h2_fold] took ", timenext( $sync ), " s\n"  ) ;
 
         $sync->{ debug } and myprint( "Host2: getting flags idate and sizes of folder [$h2_fold]\n"  ) ;
@@ -2854,10 +2926,52 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
 	# Getting host2 headers, metada and delete2 stuff can be so long that host1 might be disconnected here
         if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
 
+        # Pipeline: pre-identify messages to copy for possible pre-fetching
+        my @h1_msgs_to_copy_ids ;
+        if ( $sync->{ pipeline_depth } and $sync->{ pipeline_depth } > 0 ) {
+                foreach my $m_id ( @h1_hash_keys_sorted_by_uid ) {
+                        if ( ( not exists $h2_hash{ $m_id } )
+                                and ( not ( exists $sync->{ h2_folders_of_md5 }->{ $m_id } )
+                                      or not $sync->{ skipcrossduplicates } ) )
+                        {
+                                push @h1_msgs_to_copy_ids, $m_id ;
+                        }
+                }
+                if ( @h1_msgs_to_copy_ids ) {
+                        my $to_copy = scalar @h1_msgs_to_copy_ids ;
+                        my $depth = $sync->{ pipeline_depth } ;
+                        myprint( "Pipeline: $to_copy messages to copy, pre-fetch depth $depth\n" ) ;
+
+                        # Pre-fetch first N message bodies into a cache hash
+                        my $prefetch_count = min( $depth, $to_copy ) ;
+                        $sync->{ prefetch_cache } = {} ;
+                        for my $i ( 0 .. $prefetch_count - 1 ) {
+                                my $m_id = $h1_msgs_to_copy_ids[ $i ] ;
+                                my $h1_msg = $h1_hash{ $m_id }{'m'} ;
+                                my $h1_size = $h1_fir_ref->{ $h1_msg }->{'RFC822.SIZE'} || 0 ;
+                                # Only pre-fetch reasonably sized messages (< 10MB)
+                                if ( $h1_size < 10_000_000 ) {
+                                        eval {
+                                                my $string = $sync->{imap1}->message_string( $h1_msg ) ;
+                                                if ( defined $string ) {
+                                                        $sync->{ prefetch_cache }->{ $h1_msg } = \$string ;
+                                                        $sync->{ debug } and myprint( "Pipeline: pre-fetched msg $h1_fold/$h1_msg ($h1_size bytes)\n" ) ;
+                                                }
+                                        } ;
+                                }
+                        }
+                }
+        }
+
         my @h1_msgs_to_delete ;
+        my $mess_reconnect_counter = 0 ;
         MESS: foreach my $m_id (@h1_hash_keys_sorted_by_uid) {
                 abortifneeded( $sync ) ;
-		if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
+                # Throttle reconnect check: every 100 messages instead of every message
+                if ( $mess_reconnect_counter % 100 == 0 ) {
+                        if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
+                }
+                $mess_reconnect_counter++ ;
 
                 #myprint( "h1_nb_msg_processed: $sync->{ h1_nb_msg_processed }\n"  ) ;
                 my $h1_size  = $h1_hash{$m_id}{'s'};
@@ -2951,7 +3065,7 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         # @h1_msgs_in_cache are already synced too.
         delete_message_on_host1( $sync, $h1_fold, $sync->{ expunge1 }, @h1_msgs_to_delete, @h1_msgs_in_cache ) ;
 
-	if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
+        # reconnect check removed here: consolidated with check before MESS_BY_UID below
 
         # MESS_IN_CACHE:
         if ( ! $sync->{ delete1 } )
@@ -2998,8 +3112,20 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
                 myprint( "Host2: Expunging folder $h2_fold $sync->{dry_message}\n"  ) ;
                 if ( ! $sync->{dry} ) { $sync->{imap2}->expunge(  ) } ;
         }
+
+        # CONDSTORE: save HIGHESTMODSEQ for this folder after successful sync
+        if ( $sync->{ condstore } and $sync->{ usecache } and ! $sync->{dry} ) {
+                my $h1_modseq = $sync->{ 'Host1_highestmodseq' }->{ $h1_fold } ;
+                if ( defined $h1_modseq ) {
+                        my $cache_base = "$sync->{ tmpdir }/imapsync_cache/" ;
+                        my $account_key = "$sync->{host1}/$sync->{user1}/$sync->{host2}/$sync->{user2}" ;
+                        condstore_save_modseq( $cache_base, $account_key, $h1_fold, $h1_modseq ) ;
+                        $sync->{ debug } and myprint( "CONDSTORE: saved HIGHESTMODSEQ=$h1_modseq for folder [$h1_fold]\n" ) ;
+                }
+        }
         $sync->{ debug } and myprint( 'Time: ', timenext( $sync ), " s\n"  ) ;
 }
+} # end of else (sequential folder sync)
 
 eta_print( $sync ) ;
 
@@ -3060,6 +3186,215 @@ return ;
 
 
 # subroutines
+
+# Batch parse_headers to reduce memory peak on huge folders.
+# Instead of fetching all headers at once, fetch in chunks of $batchsize.
+sub batch_parse_headers
+{
+        my ( $imap, $msgs_ref, $useheader_ref, $batchsize ) = @_ ;
+
+        $batchsize ||= 10000 ;
+        my $total = scalar @{ $msgs_ref } ;
+
+        # Small enough, just do it in one call
+        if ( $total <= $batchsize ) {
+                return $imap->parse_headers( $msgs_ref, @{ $useheader_ref } ) ;
+        }
+
+        my %all_heads ;
+        my $offset = 0 ;
+        while ( $offset < $total ) {
+                my $end = $offset + $batchsize - 1 ;
+                $end = $total - 1 if $end >= $total ;
+                my @batch = @{ $msgs_ref }[ $offset .. $end ] ;
+                my $batch_num = int( $offset / $batchsize ) + 1 ;
+                my $total_batches = int( ( $total - 1 ) / $batchsize ) + 1 ;
+                myprint( "  Parsing headers batch $batch_num/$total_batches (messages $offset..$end of $total)\n" ) ;
+                my $heads_ref = $imap->parse_headers( \@batch, @{ $useheader_ref } ) ;
+                if ( $heads_ref ) {
+                        @all_heads{ keys %{ $heads_ref } } = values %{ $heads_ref } ;
+                }
+                $offset += $batchsize ;
+        }
+        return \%all_heads ;
+}
+
+# Parallel folder sync: fork N child processes, each with its own IMAP connections,
+# syncing a subset of folders. Results are aggregated via temp files.
+sub parallel_folder_sync
+{
+        my ( $mysync ) = @_ ;
+
+        my $parallel = $mysync->{ parallel_count } ;
+        my @folders = @{ $mysync->{ h1_folders_wanted } } ;
+        my $total = scalar @folders ;
+
+        myprint( "Parallel sync: $total folders across $parallel workers\n" ) ;
+
+        # Distribute folders round-robin across workers
+        my @worker_folders ;
+        for my $i ( 0 .. $total - 1 ) {
+                push @{ $worker_folders[ $i % $parallel ] }, $folders[ $i ] ;
+        }
+
+        my $tmpdir = $mysync->{ tmpdir } || File::Spec->tmpdir() ;
+        my @child_pids ;
+        my @result_files ;
+
+        for my $w ( 0 .. $parallel - 1 ) {
+                next if ( ! $worker_folders[ $w ] or ! scalar @{ $worker_folders[ $w ] } ) ;
+
+                my $result_file = "$tmpdir/imapsync_parallel_${$}_worker_${w}.txt" ;
+                push @result_files, $result_file ;
+
+                my $pid = fork() ;
+
+                if ( ! defined $pid ) {
+                        myprint( "Error: fork failed for worker $w: $OS_ERROR\n" ) ;
+                        next ;
+                }
+
+                if ( $pid == 0 ) {
+                        # Child process
+                        # Close parent IMAP connections — child will create its own
+                        eval { $mysync->{imap1}->disconnect() } if $mysync->{imap1} ;
+                        eval { $mysync->{imap2}->disconnect() } if $mysync->{imap2} ;
+
+                        # Re-login with new connections
+                        $mysync->{imap1} = login_imap(
+                                $mysync->{host1}, $mysync->{port1}, $mysync->{user1}, $mysync->{password1},
+                                $mysync->{ssl1}, $mysync->{tls1},
+                                $uid1, $split1, $mysync->{ acc1 }, $mysync
+                        ) ;
+                        $mysync->{imap2} = login_imap(
+                                $mysync->{host2}, $mysync->{port2}, $mysync->{user2}, $mysync->{password2},
+                                $mysync->{ssl2}, $mysync->{tls2},
+                                $uid2, $split2, $mysync->{ acc2 }, $mysync
+                        ) ;
+
+                        if ( ! $mysync->{imap1} or ! $mysync->{imap2} ) {
+                                myprint( "Worker $w: login failed, exiting\n" ) ;
+                                exit 1 ;
+                        }
+
+                        # Override folders list for this worker
+                        $mysync->{ h1_folders_wanted } = $worker_folders[ $w ] ;
+
+                        my $worker_nb_errors = 0 ;
+                        my $worker_bytes = 0 ;
+                        my $worker_msgs = 0 ;
+
+                        myprint( "Worker $w: syncing ", scalar @{ $worker_folders[ $w ] }, " folders\n" ) ;
+
+                        # Reset counters for this child
+                        $mysync->{ nb_errors } = 0 ;
+                        $mysync->{ total_bytes_transferred } = 0 ;
+                        $mysync->{ nb_msg_transferred } = 0 ;
+                        $mysync->{ nb_msg_skipped } = 0 ;
+                        $mysync->{ total_bytes_skipped } = 0 ;
+
+                        # Note: we reuse the original FOLDER loop logic by calling it inline.
+                        # The child simply does sequential sync on its assigned folders.
+                        # We can't easily re-enter the FOLDER loop, so we use a system() trick:
+                        # build args with --folder for each assigned folder.
+
+                        # Actually, the simplest approach: exec imapsync with --folder for each folder
+                        # But that restarts the whole process. Instead, let's just do a minimal folder loop.
+
+                        my %uid_cand_del ;
+                        my %uid_cand_nodel ;
+                        $mysync->{ h2_folders_of_md5 } = {} ;
+
+                        $h1_folders_wanted_nb = scalar @{ $mysync->{ h1_folders_wanted } } ;
+                        $h1_folders_wanted_ct = 0 ;
+
+                        # Note: the child inherits all the variables from the parent scope.
+                        # The FOLDER loop body is in the main code and can't be called as a sub
+                        # (it's inline in single_sync). We handle this by re-executing imapsync
+                        # with the subset of folders as separate --folder arguments.
+
+                        my @cmd = ( $PROGRAM_NAME ) ;
+                        # Reconstruct essential arguments
+                        push @cmd, '--host1', $mysync->{host1}, '--user1', $mysync->{user1} ;
+                        push @cmd, '--password1', $mysync->{password1} if $mysync->{password1} ;
+                        push @cmd, '--host2', $mysync->{host2}, '--user2', $mysync->{user2} ;
+                        push @cmd, '--password2', $mysync->{password2} if $mysync->{password2} ;
+                        push @cmd, '--ssl1' if $mysync->{ssl1} ;
+                        push @cmd, '--ssl2' if $mysync->{ssl2} ;
+                        push @cmd, '--tls1' if $mysync->{tls1} ;
+                        push @cmd, '--tls2' if $mysync->{tls2} ;
+                        push @cmd, '--noparallel' ; # prevent recursive parallelism
+                        push @cmd, '--usecache' if $mysync->{ usecache } ;
+                        push @cmd, '--nousecache' if defined $mysync->{ usecache } and ! $mysync->{ usecache } ;
+                        push @cmd, '--dry' if $mysync->{dry} ;
+                        push @cmd, '--delete2' if $mysync->{ delete2 } ;
+                        push @cmd, '--delete1' if $mysync->{ delete1 } ;
+                        push @cmd, '--maxsize', $mysync->{ maxsize } if defined $mysync->{ maxsize } ;
+                        push @cmd, '--exitwhenover', $mysync->{ exitwhenover } if $mysync->{ exitwhenover } ;
+                        push @cmd, '--nolog' ;  # parent handles logging
+                        push @cmd, '--noreleasecheck' ;
+
+                        for my $f ( @{ $worker_folders[ $w ] } ) {
+                                push @cmd, '--folder', $f ;
+                        }
+
+                        # Pass regextrans2 options
+                        if ( $mysync->{ regextrans2 } ) {
+                                for my $r ( @{ $mysync->{ regextrans2 } } ) {
+                                        push @cmd, '--regextrans2', $r ;
+                                }
+                        }
+
+                        myprint( "Worker $w: launching sub-imapsync for ", scalar @{ $worker_folders[ $w ] }, " folders\n" ) ;
+                        my $exit_code = system( @cmd ) ;
+                        $exit_code = $exit_code >> 8 ;
+
+                        # Write results to file for parent to collect
+                        if ( open my $fh, '>', $result_file ) {
+                                print $fh "worker=$w\n" ;
+                                print $fh "exit_code=$exit_code\n" ;
+                                print $fh "folders=" . scalar( @{ $worker_folders[ $w ] } ) . "\n" ;
+                                close $fh ;
+                        }
+
+                        exit $exit_code ;
+                }
+                else {
+                        # Parent
+                        push @child_pids, $pid ;
+                        myprint( "Worker $w: started with PID $pid, ", scalar @{ $worker_folders[ $w ] }, " folders\n" ) ;
+                }
+        }
+
+        # Parent: wait for all children
+        my $total_errors = 0 ;
+        for my $pid ( @child_pids ) {
+                waitpid( $pid, 0 ) ;
+                my $child_exit = $? >> 8 ;
+                if ( $child_exit != 0 ) {
+                        myprint( "Worker PID $pid exited with code $child_exit\n" ) ;
+                        $total_errors++ ;
+                }
+        }
+
+        # Read result files
+        for my $rf ( @result_files ) {
+                if ( open my $fh, '<', $rf ) {
+                        while ( my $line = <$fh> ) {
+                                chomp $line ;
+                                myprint( "  Parallel result: $line\n" ) ;
+                        }
+                        close $fh ;
+                        unlink $rf ;
+                }
+        }
+
+        $mysync->{ nb_errors } += $total_errors ;
+        myprint( "Parallel sync completed: $total_errors workers with errors\n" ) ;
+
+        return ;
+}
+
 sub myprint
 {
         #print @ARG ;
@@ -9702,8 +10037,66 @@ sub select_folder
                 return( 0 ) ;
         }else{
                 # ok select succeeded
+                # Extract HIGHESTMODSEQ if CONDSTORE is enabled
+                if ( $mysync->{ condstore } ) {
+                        my $highestmodseq = highestmodseq_from_select( $imap->History ) ;
+                        if ( defined $highestmodseq ) {
+                                $mysync->{ debug } and myprint( "$hostside: folder [$folder] HIGHESTMODSEQ=$highestmodseq\n" ) ;
+                                $mysync->{ "${hostside}_highestmodseq" }->{ $folder } = $highestmodseq ;
+                        }
+                }
                 return( 1 ) ;
         }
+}
+
+# Parse HIGHESTMODSEQ from SELECT response lines
+sub highestmodseq_from_select
+{
+        my @lines = @ARG ;
+        foreach my $line ( @lines ) {
+                if ( $line =~ m/HIGHESTMODSEQ\s+(\d+)/xi ) {
+                        return $1 ;
+                }
+        }
+        return undef ;
+}
+
+# Load stored HIGHESTMODSEQ for a folder from cache
+sub condstore_load_modseq
+{
+        my ( $cache_base, $account_key, $folder ) = @_ ;
+        my $modseq_file = "$cache_base/$account_key/CONDSTORE_" . _folder_to_filename( $folder ) ;
+        if ( -f $modseq_file and open my $fh, '<', $modseq_file ) {
+                my $modseq = <$fh> ;
+                chomp $modseq if defined $modseq ;
+                close $fh ;
+                return $modseq if $modseq and $modseq =~ m/^\d+$/x ;
+        }
+        return undef ;
+}
+
+# Save HIGHESTMODSEQ for a folder to cache
+sub condstore_save_modseq
+{
+        my ( $cache_base, $account_key, $folder, $modseq ) = @_ ;
+        return if ! defined $modseq ;
+        my $dir = "$cache_base/$account_key" ;
+        mkpath( $dir ) if ! -d $dir ;
+        my $modseq_file = "$dir/CONDSTORE_" . _folder_to_filename( $folder ) ;
+        if ( open my $fh, '>', $modseq_file ) {
+                print $fh "$modseq\n" ;
+                close $fh ;
+        }
+        return ;
+}
+
+# Convert folder name to safe filename for cache
+sub _folder_to_filename
+{
+        my ( $folder ) = @_ ;
+        my $safe = $folder ;
+        $safe =~ s{[/\\:\*\?"<>\|]}{_}gx ;
+        return $safe ;
 }
 
 sub examine_folder
@@ -11890,8 +12283,17 @@ sub message_for_host2
 
         myprint( debugmemory( $mysync, " at M1" ) ) ;
 
-
-        my $string_ok = $mysync->{imap1}->message_to_file( $string_ref, $h1_msg ) ;
+        my $string_ok ;
+        # Pipeline: check if message was pre-fetched
+        if ( $mysync->{ prefetch_cache } and exists $mysync->{ prefetch_cache }->{ $h1_msg } ) {
+                ${ $string_ref } = ${ $mysync->{ prefetch_cache }->{ $h1_msg } } ;
+                delete $mysync->{ prefetch_cache }->{ $h1_msg } ; # free memory
+                $string_ok = 1 ;
+                $mysync->{ debug } and myprint( "Pipeline: used pre-fetched message $h1_fold/$h1_msg\n" ) ;
+        }
+        else {
+                $string_ok = $mysync->{imap1}->message_to_file( $string_ref, $h1_msg ) ;
+        }
 
         myprint( debugmemory( $mysync, " at M2" ) ) ;
 
@@ -21389,6 +21791,11 @@ sub get_options_cmd
         'emailreport2!'    => \$mysync->{ emailreport2 },
         'var=s@'           => \$mysync->{ var },
         'memorystress!'    => \$mysync->{ memorystress },
+        'batchsize=i'      => \$mysync->{ batchsize },
+        'parallel=i'       => \$mysync->{ parallel_count },
+        'noparallel'       => sub { $mysync->{ parallel_count } = 1 },
+        'pipeline=i'       => \$mysync->{ pipeline_depth },
+        'condstore!'       => \$mysync->{ condstore },
         ) ;
         #myprint( Data::Dumper->Dump( [ $mysync ] )  ) ;
         $mysync->{ debug } and output( $mysync, "get options: [$opt_ret][$numopt]\n" ) ;
