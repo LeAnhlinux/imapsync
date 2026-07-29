@@ -6,6 +6,17 @@ TZ_VN = timezone(timedelta(hours=7))
 def now_vn():
     return datetime.now(TZ_VN).replace(tzinfo=None)
 
+
+def format_account(user: str, host: str) -> str:
+    """Label a mailbox for display.
+
+    An IMAP username is usually already a full address, so gluing the host on
+    with an @ produced "me@old.com@mail.old.com"; and when it is not an
+    address, "u1@a.com" reads like one. Keep the host in parentheses so the
+    two parts stay distinguishable either way.
+    """
+    return f"{user} ({host})"
+
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import relationship
 

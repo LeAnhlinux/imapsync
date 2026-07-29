@@ -291,7 +291,11 @@ export function SettingsPage() {
               <div className="text-sm text-muted-foreground border-t border-border pt-3">
                 <p className="font-medium mb-1">Commands</p>
                 <p><code className="text-xs">/profiles /sync &lt;id&gt; /jobs /status &lt;id&gt; /stop &lt;id&gt; /history</code></p>
-                <p className="mt-1">Send a .csv file with caption <code className="text-xs">/batch</code> to import mailboxes, then <code className="text-xs">/batchgo &lt;id&gt;</code> to run it.</p>
+                <p className="mt-1">Sync a single mailbox without a profile:</p>
+                <pre className="text-xs bg-muted rounded p-2 mt-1 overflow-x-auto">{`/run
+from: mail.old.com;me@old.com;password
+to: mail.new.com;me@new.com;password`}</pre>
+                <p className="mt-1">Or send a .csv file with caption <code className="text-xs">/batch</code>, then <code className="text-xs">/batchgo &lt;id&gt;</code> to run it.</p>
               </div>
             </form>
           </CardContent>

@@ -8,7 +8,7 @@ uploaded through the web form.
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models import BatchRun, SyncJob, now_vn
+from ..models import BatchRun, SyncJob, format_account, now_vn
 from ..security import decrypt_password, encrypt_password
 from .csv_parser import parse_csv
 from .imapsync_options import sanitize_extra_options
@@ -98,8 +98,8 @@ async def run_batch(batch_id: int, user_id: int, data: dict) -> None:
         for row in rows:
             job = SyncJob(
                 user_id=user_id,
-                source_account=f"{row['user1']}@{row['host1']}",
-                dest_account=f"{row['user2']}@{row['host2']}",
+                source_account=format_account(row["user1"], row["host1"]),
+                dest_account=format_account(row["user2"], row["host2"]),
                 status="running",
                 started_at=now_vn(),
             )

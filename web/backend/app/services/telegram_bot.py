@@ -36,7 +36,7 @@ HELP = """imapsync bot
 
 /profiles - list sync profiles
 /sync <profile_id> - start a sync from a profile
-/run <host1;user1;pass1;host2;user2;pass2> - sync one mailbox right now
+/run - sync one mailbox now (send /run on its own for the format)
 /batch - send a .csv file with this as the caption
 /batchgo <batch_id> - run a batch you uploaded
 /jobs - jobs running right now
@@ -415,34 +415,31 @@ async def _cmd_stop(user_id: int, job_id: int) -> str:
     return f"Job #{job_id} aborted."
 
 
-RUN_USAGE = (
-    "Usage: /run host1;user1;password1;host2;user2;password2[;options]\n\n"
-    "Example:\n"
-    "/run mail.old.com;me@old.com;pw1;mail.new.com;me@new.com;pw2\n\n"
-    "The options field is optional, e.g. ;--dry or ;--maxage 30\n"
-    "Use --nossl1 / --nossl2 there for servers without TLS.\n"
-    "Paste several lines to queue them as a batch instead."
-)
-
-
 async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> str:
     """Sync one mailbox from credentials typed straight into the chat."""
     from .batch_runner import create_batch, describe_batch
-    from .csv_parser import parse_csv
-    from .sync_starter import start_adhoc_sync
+    from .run_command import USAGE, RunSyntaxError, describe, is_labeled, parse_flat, parse_labeled
 
     if not body.strip():
-        return RUN_USAGE
+        return USAGE
 
-    rows = parse_csv(body)
-    if not rows:
-        return "I could not parse that.\n\n" + RUN_USAGE
-
-    # The message contains mailbox passwords in cleartext. Get it out of the
-    # chat before doing anything slow.
+    # Delete before parsing, not after: a message that fails to parse can still
+    # carry a working password, and leaving the typo'd ones in the chat is the
+    # opposite of the point.
     await _delete_message(chat_id, message_id)
 
-    if len(rows) > 1:
+    labeled = is_labeled(body)
+    try:
+        specs = [parse_labeled(body)] if labeled else parse_flat(body)
+    except RunSyntaxError as exc:
+        return str(exc)
+
+    if not specs:
+        return "I could not parse that.\n\n" + USAGE
+
+    # Several flat lines are a list of mailboxes, not a one-off: make a batch
+    # and make the user confirm it.
+    if len(specs) > 1:
         db = SessionLocal()
         try:
             batch = create_batch(db, user_id, body, "telegram-run.csv")
@@ -453,14 +450,14 @@ async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> st
         finally:
             db.close()
         return (
-            f"That was {len(rows)} mailboxes, so I made a batch instead.\n\n"
+            f"That was {len(specs)} mailboxes, so I made a batch instead.\n\n"
             f"{preview}\n\n"
             f"{_CREDENTIAL_WARNING}\n"
             f"Run it with: /batchgo {batch_id}"
         )
 
-    row = rows[0]
-    extra = dict(row.get("extra_options") or {})
+    spec = specs[0]
+    extra = dict(spec.extra_options)
     # ssl1/ssl2 are managed by the runner and blocked from extra_options, so
     # accept them here as their own thing.
     ssl1 = not extra.pop("nossl1", False)
@@ -472,24 +469,29 @@ async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> st
         return f"Unsupported or unsafe imapsync options: {', '.join(sorted(rejected))}"
 
     try:
-        job_id = await start_adhoc_sync(
-            user_id,
-            host1=row["host1"], user1=row["user1"], password1=row["password1"],
-            host2=row["host2"], user2=row["user2"], password2=row["password2"],
-            ssl1=ssl1, ssl2=ssl2,
-            extra_options=extra,
-            dry_run=dry_run,
-        )
+        job_id = await _start_adhoc(user_id, spec, ssl1, ssl2, extra, dry_run)
     except Exception as exc:
         log.exception("Telegram /run failed")
         return f"Could not start the sync: {exc}"
 
-    mode = " (dry run)" if dry_run else ""
     return (
-        f"Started job #{job_id}{mode}\n"
-        f"{row['user1']} on {row['host1']} -> {row['user2']} on {row['host2']}\n\n"
+        f"Started job #{job_id}\n"
+        f"{describe(spec, dry_run)}\n\n"
         f"{_CREDENTIAL_WARNING}\n"
         f"Follow it with: /status {job_id}"
+    )
+
+
+async def _start_adhoc(user_id, spec, ssl1, ssl2, extra, dry_run) -> int:
+    from .sync_starter import start_adhoc_sync
+
+    return await start_adhoc_sync(
+        user_id,
+        host1=spec.host1, user1=spec.user1, password1=spec.password1,
+        host2=spec.host2, user2=spec.user2, password2=spec.password2,
+        ssl1=ssl1, ssl2=ssl2,
+        extra_options=extra,
+        dry_run=dry_run,
     )
 
 

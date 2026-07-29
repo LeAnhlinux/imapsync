@@ -6,7 +6,7 @@ exists once.
 """
 
 from ..database import SessionLocal
-from ..models import Profile, SyncJob, now_vn
+from ..models import Profile, SyncJob, format_account, now_vn
 from ..security import decrypt_password
 from .imapsync_runner import start_sync
 from .job_completion import finalize_job
@@ -24,8 +24,8 @@ async def _launch(
         job = SyncJob(
             user_id=user_id,
             profile_id=profile_id,
-            source_account=f"{params['user1']}@{params['host1']}",
-            dest_account=f"{params['user2']}@{params['host2']}",
+            source_account=format_account(params["user1"], params["host1"]),
+            dest_account=format_account(params["user2"], params["host2"]),
             status="running",
             started_at=now_vn(),
         )
