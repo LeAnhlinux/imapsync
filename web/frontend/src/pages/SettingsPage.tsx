@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Loader2, Moon, Send, Sun } from 'lucide-react'
-import { notificationApi, telegramApi, type TelegramSettings, type TelegramStatus } from '@/lib/api'
+import { AlertCircle, Loader2, Moon, Send, Sun, Trash2 } from 'lucide-react'
+import { historyApi, notificationApi, telegramApi, type Retention, type TelegramSettings, type TelegramStatus } from '@/lib/api'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
@@ -78,6 +78,13 @@ export function SettingsPage() {
   const [tgTest, setTgTest] = useState<string | null>(null)
   const [tgBusy, setTgBusy] = useState(false)
 
+  const [ret, setRet] = useState<Retention>({
+    enabled: false, keep_days: 30, last_run_at: null, last_deleted: 0,
+  })
+  const [retSaved, setRetSaved] = useState(false)
+  const [retNotice, setRetNotice] = useState<string | null>(null)
+  const [retBusy, setRetBusy] = useState(false)
+
   const refreshTgStatus = () => {
     telegramApi.status().then((r) => setTgStatus(r.data)).catch(() => {})
   }
@@ -106,6 +113,50 @@ export function SettingsPage() {
     }).catch(() => {})
     refreshTgStatus()
   }, [user])
+
+  useEffect(() => {
+    historyApi.getRetention().then((r) => setRet(r.data)).catch(() => {})
+  }, [])
+
+  const handleRetSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setRetNotice(null)
+    setRetBusy(true)
+    try {
+      const r = await historyApi.saveRetention({ enabled: ret.enabled, keep_days: ret.keep_days })
+      setRet(r.data)
+      setRetSaved(true)
+      setTimeout(() => setRetSaved(false), 2000)
+    } catch (err: unknown) {
+      setRetNotice(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not save the policy.',
+      )
+    } finally {
+      setRetBusy(false)
+    }
+  }
+
+  const handleRetRun = async () => {
+    setRetNotice(null)
+    setRetBusy(true)
+    try {
+      const r = await historyApi.runRetention()
+      setRetNotice(
+        r.data.deleted === 0
+          ? 'Nothing was old enough to remove.'
+          : `Removed ${r.data.deleted} job(s) and their logs.`,
+      )
+      historyApi.getRetention().then((x) => setRet(x.data)).catch(() => {})
+    } catch (err: unknown) {
+      setRetNotice(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not run the cleanup.',
+      )
+    } finally {
+      setRetBusy(false)
+    }
+  }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -205,6 +256,87 @@ export function SettingsPage() {
             )}
           </Button>
         </div>
+      </Section>
+
+      <Section
+        title="History cleanup"
+        description="Remove old finished jobs, and the imapsync logs stored with them."
+      >
+        <form onSubmit={handleRetSave} className="space-y-4">
+          <label className="flex items-start gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              checked={ret.enabled}
+              onChange={(e) => setRet({ ...ret, enabled: e.target.checked })}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>
+              Delete old history automatically
+              <span className="block text-xs text-muted-foreground">
+                Runs every night at 03:30. Running jobs are never touched.
+              </span>
+            </span>
+          </label>
+
+          <Field
+            label="Keep finished jobs for"
+            htmlFor="keep_days"
+            hint="Anything older is removed with its log. Messages already copied are not affected."
+          >
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {[7, 30, 90, 365].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setRet({ ...ret, keep_days: d })}
+                  className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+                    ret.keep_days === d
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-subtle text-muted-foreground hover:bg-accent'
+                  }`}
+                >
+                  {d === 365 ? '1 year' : `${d} days`}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                id="keep_days"
+                type="number"
+                min={1}
+                max={3650}
+                value={ret.keep_days}
+                onChange={(e) => setRet({ ...ret, keep_days: Number(e.target.value) })}
+                className="w-28"
+                disabled={!ret.enabled}
+              />
+              <span className="text-sm text-muted-foreground">days</span>
+            </div>
+          </Field>
+
+          {ret.last_run_at && (
+            <p className="text-xs text-muted-foreground">
+              Last run {new Date(ret.last_run_at).toLocaleString()} — removed {ret.last_deleted} job(s).
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="submit" disabled={retBusy}>
+              {retBusy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              {retSaved ? 'Saved' : 'Save'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleRetRun}
+              disabled={retBusy || !ret.enabled}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              Run now
+            </Button>
+            {retNotice && <p className="text-sm text-muted-foreground">{retNotice}</p>}
+          </div>
+        </form>
       </Section>
 
       <Section

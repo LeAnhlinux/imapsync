@@ -154,6 +154,17 @@ var schema = []string{
 	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)`,
 
+	// Per user, because jobs are: the sweeper purges each account's own
+	// history rather than applying one global cutoff to everybody.
+	`CREATE TABLE IF NOT EXISTS retention_settings (
+		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+		enabled BOOLEAN,
+		keep_days INTEGER,
+		last_run_at DATETIME,
+		last_deleted INTEGER
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS webhooks (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		user_id INTEGER NOT NULL REFERENCES users(id),

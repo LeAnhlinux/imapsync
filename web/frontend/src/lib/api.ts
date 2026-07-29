@@ -58,6 +58,17 @@ export const historyApi = {
   // Deletes finished jobs older than the cutoff, and their logs.
   purge: (olderThanDays: number) =>
     api.post<{ deleted: number }>('/history/purge', { older_than_days: olderThanDays }),
+  getRetention: () => api.get<Retention>('/history/retention'),
+  saveRetention: (data: { enabled: boolean; keep_days: number }) =>
+    api.put<Retention>('/history/retention', data),
+  runRetention: () => api.post<{ deleted: number }>('/history/retention/run'),
+}
+
+export interface Retention {
+  enabled: boolean
+  keep_days: number
+  last_run_at: string | null
+  last_deleted: number
 }
 
 // Schedules

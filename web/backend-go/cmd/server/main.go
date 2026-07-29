@@ -57,6 +57,10 @@ func main() {
 	hooks := services.NewWebhooks(db, sec)
 	completion.Hooks = hooks
 
+	retention := &services.Retention{DB: db, Runner: run}
+	retention.Start()
+	defer retention.Stop()
+
 	// The bot reads its settings from the database, so it is a no-op until one
 	// is saved on the Settings page.
 	bot := telegram.New(db, sec, run, starter, batch)
@@ -67,13 +71,14 @@ func main() {
 
 	srv := &api.Server{
 		Cfg: cfg, DB: db, Sec: sec, Runner: run,
-		Starter: starter,
-		Batch:   batch,
-		Folders: &services.Folders{ImapsyncPath: cfg.ImapsyncPath, TmpDir: cfg.TmpDir()},
-		Mailer:  mailer,
-		Cron:    scheduler,
-		Bot:     bot,
-		Hooks:   hooks,
+		Starter:   starter,
+		Batch:     batch,
+		Folders:   &services.Folders{ImapsyncPath: cfg.ImapsyncPath, TmpDir: cfg.TmpDir()},
+		Mailer:    mailer,
+		Cron:      scheduler,
+		Bot:       bot,
+		Hooks:     hooks,
+		Retention: retention,
 	}
 
 	httpServer := &http.Server{

@@ -449,6 +449,34 @@ Deletes finished jobs and their logs. Running jobs are never touched.
 Logs are the reason this exists: a job row is a few hundred bytes, but its
 imapsync output can be megabytes, and nothing else removes them.
 
+### History retention
+
+A saved policy that the server applies on its own, every night at 03:30 local
+time. Off by default — a tool that starts deleting history unasked would be a
+surprise. Running jobs are never touched.
+
+| Method | Path | Scope |
+|---|---|---|
+| GET | `/api/history/retention` | `sync:read` |
+| PUT | `/api/history/retention` | `sync:write` |
+| POST | `/api/history/retention/run` | `sync:write` |
+
+```json
+{ "enabled": true, "keep_days": 30 }
+```
+
+`keep_days` must be between 1 and 3650. The response also carries when the
+sweep last ran and how much it removed:
+
+```json
+{ "enabled": true, "keep_days": 30,
+  "last_run_at": "2026-07-29T03:30:02.114000", "last_deleted": 12 }
+```
+
+`POST .../run` applies the saved policy immediately and returns
+`{"deleted": n}` — the only way to confirm the setting does what you expect
+without waiting a day. It is a 400 while the policy is switched off.
+
 ### `GET /api/history/stats` — scope `sync:read`
 
 ```json
@@ -572,6 +600,9 @@ The API takes mailbox passwords, so:
 | POST | `/api/sync/{id}/abort` | `sync:write` |
 | DELETE | `/api/sync/{id}` | `sync:write` |
 | POST | `/api/history/purge` | `sync:write` |
+| GET | `/api/history/retention` | `sync:read` |
+| PUT | `/api/history/retention` | `sync:write` |
+| POST | `/api/history/retention/run` | `sync:write` |
 | GET | `/api/sync/running` | `sync:read` |
 | GET | `/api/sync/{id}` | `sync:read` |
 | GET | `/api/sync/{id}/log` | `sync:read` |

@@ -248,3 +248,65 @@ func (s *Server) purgeHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": len(ids)})
 }
+
+func (s *Server) getRetention(w http.ResponseWriter, r *http.Request) {
+	rt, err := s.DB.RetentionFor(userFrom(r).ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rt)
+}
+
+func (s *Server) updateRetention(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Enabled  *bool `json:"enabled"`
+		KeepDays *int  `json:"keep_days"`
+	}
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	rt, err := s.DB.RetentionFor(userFrom(r).ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if b.Enabled != nil {
+		rt.Enabled = *b.Enabled
+	}
+	if b.KeepDays != nil {
+		// A floor of one day: "keep zero days" would delete a job the moment
+		// it finished, which is never what someone means by retention.
+		if *b.KeepDays < 1 || *b.KeepDays > 3650 {
+			writeError(w, http.StatusBadRequest, "keep_days must be between 1 and 3650")
+			return
+		}
+		rt.KeepDays = *b.KeepDays
+	}
+	if err := s.DB.SaveRetention(rt); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rt, _ = s.DB.RetentionFor(userFrom(r).ID)
+	writeJSON(w, http.StatusOK, rt)
+}
+
+// runRetention applies the saved policy immediately, so the setting can be
+// verified without waiting for the nightly sweep.
+func (s *Server) runRetention(w http.ResponseWriter, r *http.Request) {
+	rt, err := s.DB.RetentionFor(userFrom(r).ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !rt.Enabled {
+		writeError(w, http.StatusBadRequest, "Automatic cleanup is switched off.")
+		return
+	}
+	n, err := s.Retention.SweepUser(userFrom(r).ID, rt.KeepDays)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}

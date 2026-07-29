@@ -37,12 +37,18 @@ type Server struct {
 
 	// Starter launches syncs; an interface to avoid an import cycle with
 	// services, which needs the store and runner this Server already holds.
-	Starter Starter
-	Batch   BatchService
-	Folders FolderBrowser
-	Mailer  Mailer
-	Cron    CronService
-	Hooks   WebhookService
+	Starter   Starter
+	Batch     BatchService
+	Folders   FolderBrowser
+	Mailer    Mailer
+	Cron      CronService
+	Hooks     WebhookService
+	Retention RetentionService
+}
+
+// RetentionService applies the saved history-cleanup policy.
+type RetentionService interface {
+	SweepUser(userID int64, keepDays int) (int, error)
 }
 
 // WebhookService delivers job events to registered URLs.
@@ -122,6 +128,9 @@ func (s *Server) Routes() http.Handler {
 			r.With(requireScope("sync:write")).Post("/sync/{id}/abort", s.abortSync)
 			r.With(requireScope("sync:write")).Delete("/sync/{id}", s.deleteSync)
 			r.With(requireScope("sync:write")).Post("/history/purge", s.purgeHistory)
+			r.With(requireScope("sync:read")).Get("/history/retention", s.getRetention)
+			r.With(requireScope("sync:write")).Put("/history/retention", s.updateRetention)
+			r.With(requireScope("sync:write")).Post("/history/retention/run", s.runRetention)
 			r.With(requireScope("sync:read")).Get("/sync/running", s.runningSyncs)
 			r.With(requireScope("sync:read")).Get("/sync/{id}", s.getSync)
 			r.With(requireScope("sync:read")).Get("/sync/{id}/log", s.syncLog)

@@ -227,3 +227,71 @@ func (db *DB) SaveTelegramSettings(t *TelegramSettings) error {
 		NowVN().Format(TimeLayout))
 	return err
 }
+
+// ------------------------------------------------------- retention settings
+
+// Retention describes how long one account keeps finished jobs before the
+// nightly sweeper removes them and their logs.
+type Retention struct {
+	UserID      int64      `json:"-"`
+	Enabled     bool       `json:"enabled"`
+	KeepDays    int        `json:"keep_days"`
+	LastRunAt   *NaiveTime `json:"last_run_at"`
+	LastDeleted int        `json:"last_deleted"`
+}
+
+const retentionCols = `user_id,COALESCE(enabled,0),COALESCE(keep_days,30),last_run_at,COALESCE(last_deleted,0)`
+
+func scanRetention(s interface{ Scan(...any) error }) (*Retention, error) {
+	var r Retention
+	var last sql.NullTime
+	if err := s.Scan(&r.UserID, &r.Enabled, &r.KeepDays, &last, &r.LastDeleted); err != nil {
+		return nil, err
+	}
+	r.LastRunAt = naivePtr(last)
+	return &r, nil
+}
+
+// RetentionFor returns the account's settings, defaulting to disabled: a tool
+// that starts silently deleting history would be a surprise.
+func (db *DB) RetentionFor(userID int64) (*Retention, error) {
+	r, err := scanRetention(db.QueryRow(
+		`SELECT `+retentionCols+` FROM retention_settings WHERE user_id=?`, userID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return &Retention{UserID: userID, Enabled: false, KeepDays: 30}, nil
+	}
+	return r, err
+}
+
+func (db *DB) SaveRetention(r *Retention) error {
+	_, err := db.Exec(`INSERT INTO retention_settings (user_id,enabled,keep_days)
+		VALUES (?,?,?)
+		ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled, keep_days=excluded.keep_days`,
+		r.UserID, r.Enabled, r.KeepDays)
+	return err
+}
+
+func (db *DB) RecordRetentionRun(userID int64, deleted int) error {
+	_, err := db.Exec(`UPDATE retention_settings SET last_run_at=?, last_deleted=? WHERE user_id=?`,
+		NowVN().Format(TimeLayout), deleted, userID)
+	return err
+}
+
+// EnabledRetentions is what the nightly sweeper iterates.
+func (db *DB) EnabledRetentions() ([]*Retention, error) {
+	rows, err := db.Query(`SELECT ` + retentionCols +
+		` FROM retention_settings WHERE enabled=1 AND COALESCE(keep_days,0) > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Retention
+	for rows.Next() {
+		r, err := scanRetention(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
