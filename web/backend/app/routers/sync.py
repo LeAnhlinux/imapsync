@@ -1,13 +1,14 @@
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from ..models import now_vn
 from sqlalchemy.orm import Session
 
 from ..deps import get_current_user, get_db
 from ..models import Profile, SyncJob, User
 from ..schemas import SyncJobOut, SyncStart
 from ..security import decrypt_password
-from ..services.imapsync_runner import abort_job, get_job_log, get_running_jobs, start_sync
+from ..services.imapsync_runner import abort_job, get_job_log, start_sync
+from ..services.job_completion import finalize_job
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -45,8 +46,10 @@ async def start(data: SyncStart, user: User = Depends(get_current_user), db: Ses
     job = SyncJob(
         user_id=user.id,
         profile_id=data.profile_id,
+        source_account=f"{user1}@{host1}",
+        dest_account=f"{user2}@{host2}",
         status="running",
-        started_at=datetime.utcnow(),
+        started_at=now_vn(),
         logfile=f"{None}",  # Will be set after start
     )
     db.add(job)
@@ -55,24 +58,6 @@ async def start(data: SyncStart, user: User = Depends(get_current_user), db: Ses
 
     job.logfile = str(f"data/logs/{job.id}.txt")
     db.commit()
-
-    # Callback to update DB when job completes
-    async def on_complete(job_id: int, exit_code: int, summary: dict):
-        from ..database import SessionLocal
-        s = SessionLocal()
-        try:
-            j = s.query(SyncJob).filter(SyncJob.id == job_id).first()
-            if j:
-                j.status = "completed" if exit_code == 0 else "failed"
-                j.exit_code = exit_code
-                j.finished_at = datetime.utcnow()
-                j.messages_transferred = summary.get("messages_transferred", 0)
-                j.bytes_transferred = summary.get("bytes_transferred", 0)
-                j.errors_count = summary.get("errors_count", 0)
-                j.summary = summary.get("summary", "")
-                s.commit()
-        finally:
-            s.close()
 
     # Start the subprocess
     running_job = await start_sync(
@@ -83,7 +68,7 @@ async def start(data: SyncStart, user: User = Depends(get_current_user), db: Ses
         folders=data.folders or None,
         extra_options=extra_options,
         dry_run=data.dry_run,
-        on_complete=on_complete,
+        on_complete=finalize_job,
     )
 
     job.pid = running_job.process.pid
@@ -119,7 +104,7 @@ async def abort(job_id: int, user: User = Depends(get_current_user), db: Session
     success = await abort_job(job_id)
     if success:
         job.status = "aborted"
-        job.finished_at = datetime.utcnow()
+        job.finished_at = now_vn()
         db.commit()
         return {"status": "aborted"}
     else:

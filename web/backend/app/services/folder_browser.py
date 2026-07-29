@@ -36,11 +36,19 @@ async def browse_folders(host: str, user: str, password: str, ssl: bool = True) 
     )
 
     try:
-        os.unlink(passfile.name)
-    except OSError:
-        pass
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+    finally:
+        # Only now: imapsync reads the passfile after it starts, so unlinking
+        # right after the spawn races the child and makes the login fail.
+        try:
+            os.unlink(passfile.name)
+        except OSError:
+            pass
 
-    stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
     output = stdout.decode('utf-8', errors='replace')
 
     return _parse_folder_sizes(output)

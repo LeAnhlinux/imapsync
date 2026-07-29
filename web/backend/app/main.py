@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .database import init_db
 from .routers import auth, profiles, sync, history, schedules, folders, batch, notifications, ws
+from .services.job_completion import reconcile_orphan_jobs
 from .services.scheduler import init_scheduler, scheduler
 
 
@@ -14,6 +15,9 @@ from .services.scheduler import init_scheduler, scheduler
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
+    interrupted = reconcile_orphan_jobs()
+    if interrupted:
+        print(f"Marked {interrupted} job(s) left running by a previous shutdown as interrupted")
     init_scheduler()
     yield
     # Shutdown
