@@ -26,7 +26,14 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Security headers
+    # Security headers. Certbot moves this block to :443 and creates a fresh
+    # :80 redirect, so HSTS ends up where it belongs — a browser ignores it
+    # over plain HTTP anyway.
+    #
+    # This site takes mailbox passwords, and without HSTS the first visit to
+    # a bare hostname still travels over HTTP before the 301. "always" so it
+    # is sent on error responses too.
+    add_header Strict-Transport-Security "max-age=31536000" always;
     add_header X-Frame-Options DENY;
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
