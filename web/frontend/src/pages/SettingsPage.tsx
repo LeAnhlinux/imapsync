@@ -3,6 +3,7 @@ import { notificationApi, telegramApi, type TelegramSettings, type TelegramStatu
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/data'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
@@ -118,8 +119,8 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <h2 className="text-2xl font-bold">Settings</h2>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader title="Settings" description="Account, appearance and notifications." />
 
       {/* Account */}
       <Card>

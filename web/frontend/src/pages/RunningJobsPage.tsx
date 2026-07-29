@@ -1,14 +1,25 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { ChevronDown, ChevronRight, Inbox, Square } from 'lucide-react'
 import { syncApi } from '@/lib/api'
 import { useJobWebSocket } from '@/lib/ws'
 import { Button } from '@/components/ui/button'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { StatusBadge } from '@/components/ui/badge'
+import {
+  EmptyState,
+  PageHeader,
+  Progress,
+  formatBytes,
+  formatDuration,
+} from '@/components/ui/data'
 
 interface Job {
   id: number
   status: string
   pid: number | null
   started_at: string | null
+  source_account: string | null
+  dest_account: string | null
   profile_id: number | null
   messages_transferred: number
   bytes_transferred: number
@@ -16,7 +27,8 @@ interface Job {
 
 export function RunningJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
-  const [selectedJob, setSelectedJob] = useState<number | null>(null)
+  const [open, setOpen] = useState<number | null>(null)
+  const [aborting, setAborting] = useState<number | null>(null)
 
   useEffect(() => {
     const load = () => {
@@ -27,118 +39,173 @@ export function RunningJobsPage() {
     return () => clearInterval(interval)
   }, [])
 
+  const abort = async (id: number) => {
+    setAborting(id)
+    try {
+      await syncApi.abort(id)
+      setJobs((prev) => prev.filter((j) => j.id !== id))
+    } finally {
+      setAborting(null)
+    }
+  }
+
   return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Running Jobs</h2>
+    <div className="mx-auto max-w-5xl">
+      <PageHeader
+        title="Running Jobs"
+        description="Live progress and output for syncs in flight."
+      />
 
       {jobs.length === 0 ? (
-        <Card>
-          <CardContent className="p-6">
-            <p className="text-muted-foreground">No jobs currently running.</p>
-          </CardContent>
-        </Card>
+        <div className="rounded-lg border border-border bg-card">
+          <EmptyState
+            icon={Inbox}
+            title="Nothing running"
+            description="Syncs you start will appear here until they finish."
+            action={
+              <Link
+                to="/sync/new"
+                className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
+              >
+                Start a sync
+              </Link>
+            }
+          />
+        </div>
       ) : (
-        <div className="space-y-4">
-          {jobs.map((job) => (
-            <Card key={job.id} className={selectedJob === job.id ? 'ring-2 ring-primary' : ''}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Job #{job.id}</CardTitle>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSelectedJob(selectedJob === job.id ? null : job.id)}
-                    >
-                      {selectedJob === job.id ? 'Hide Logs' : 'View Logs'}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={async () => {
-                        await syncApi.abort(job.id)
-                        setJobs((prev) => prev.filter((j) => j.id !== job.id))
-                      }}
-                    >
-                      Abort
-                    </Button>
-                  </div>
+        <div className="space-y-3">
+          {jobs.map((job) => {
+            const expanded = open === job.id
+            return (
+              <div key={job.id} className="overflow-hidden rounded-lg border border-border bg-card">
+                <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <button
+                    onClick={() => setOpen(expanded ? null : job.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    aria-expanded={expanded}
+                  >
+                    {expanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {job.source_account ?? `Job #${job.id}`}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        → {job.dest_account ?? '—'}
+                      </p>
+                    </div>
+                  </button>
+
+                  <StatusBadge status={job.status} />
+                  <span className="tabular hidden text-xs text-muted-foreground sm:inline">
+                    {formatDuration(job.started_at)}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => abort(job.id)}
+                    disabled={aborting === job.id}
+                    className="text-danger hover:bg-danger-soft"
+                  >
+                    <Square className="mr-1.5 h-3 w-3" />
+                    {aborting === job.id ? 'Stopping…' : 'Stop'}
+                  </Button>
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-4 text-sm text-muted-foreground">
-                  <span>PID: {job.pid}</span>
-                  <span>Started: {job.started_at ? new Date(job.started_at).toLocaleTimeString() : '-'}</span>
-                  <span>Status: <span className="text-foreground font-medium">{job.status}</span></span>
+
+                <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border bg-subtle px-4 py-2 text-xs text-muted-foreground">
+                  <span>
+                    Job <span className="tabular font-mono">#{job.id}</span>
+                  </span>
+                  <span>
+                    PID <span className="tabular font-mono">{job.pid ?? '—'}</span>
+                  </span>
+                  <span>
+                    Messages <span className="tabular">{job.messages_transferred.toLocaleString()}</span>
+                  </span>
+                  <span>
+                    Data <span className="tabular">{formatBytes(job.bytes_transferred)}</span>
+                  </span>
                 </div>
-                {selectedJob === job.id && <LogViewer jobId={job.id} />}
-              </CardContent>
-            </Card>
-          ))}
+
+                {expanded && <LiveLog jobId={job.id} />}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
 
-function LogViewer({ jobId }: { jobId: number }) {
+function LiveLog({ jobId }: { jobId: number }) {
   const { logs, progress, jobStatus } = useJobWebSocket(jobId)
-  const logEndRef = useRef<HTMLDivElement>(null)
-  const [fallbackLogs, setFallbackLogs] = useState<string[]>([])
+  const endRef = useRef<HTMLDivElement>(null)
+  const [fallback, setFallback] = useState<string[]>([])
+  const [stick, setStick] = useState(true)
 
+  // Only follow the tail while the user is already at the bottom; yanking the
+  // view back down while they are reading further up is worse than not
+  // following at all.
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs, fallbackLogs])
+    if (stick) endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs, fallback, stick])
 
-  // Fallback: fetch log via REST if WebSocket has no logs after 3s
+  // If the socket produced nothing after 3s, fall back to the REST log so an
+  // already-finished job still shows its output.
   useEffect(() => {
     const timer = setTimeout(() => {
       if (logs.length === 0) {
-        syncApi.log(jobId).then((r) => {
-          const logText = r.data?.log || ''
-          if (logText) setFallbackLogs(logText.split('\n'))
-        }).catch(() => {})
+        syncApi
+          .log(jobId)
+          .then((r) => {
+            const text = r.data?.log || ''
+            if (text) setFallback(text.split('\n'))
+          })
+          .catch(() => {})
       }
     }, 3000)
     return () => clearTimeout(timer)
   }, [jobId, logs.length])
 
-  const displayLogs = logs.length > 0 ? logs : fallbackLogs
+  const lines = logs.length > 0 ? logs : fallback
 
   return (
-    <div className="mt-4 space-y-3">
-      {/* Progress bar */}
+    <div className="border-t border-border p-4">
       {progress && (
-        <div>
-          <div className="flex justify-between text-sm mb-1">
-            <span>Folder {progress.folder}</span>
-            <span>{progress.percent}%{progress.eta ? ` - ETA: ${progress.eta}` : ''}</span>
-          </div>
-          <div className="w-full bg-muted rounded-full h-2">
-            <div
-              className="bg-primary h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
+        <div className="mb-3">
+          <Progress
+            value={progress.percent}
+            label={`Folder ${progress.folder}${progress.eta ? ` · ETA ${progress.eta}` : ''}`}
+          />
         </div>
       )}
 
       {jobStatus && (
-        <div className={`text-sm font-medium ${jobStatus === 'completed' ? 'text-green-600' : 'text-destructive'}`}>
-          Job {jobStatus}
-        </div>
+        <p className="mb-2">
+          <StatusBadge status={jobStatus} />
+        </p>
       )}
 
-      {/* Log output */}
-      <div className="bg-muted rounded-md p-3 max-h-96 overflow-y-auto font-mono text-xs">
-        {displayLogs.length === 0 ? (
-          <p className="text-muted-foreground">Waiting for output...</p>
+      <div
+        onScroll={(e) => {
+          const el = e.currentTarget
+          setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+        }}
+        className="max-h-96 overflow-y-auto rounded-md bg-subtle p-3 font-mono text-xs leading-relaxed"
+      >
+        {lines.length === 0 ? (
+          <p className="text-muted-foreground">Waiting for output…</p>
         ) : (
-          displayLogs.map((line, i) => (
-            <div key={i} className="whitespace-pre-wrap">{line}</div>
+          lines.map((line, i) => (
+            <div key={i} className="whitespace-pre-wrap break-all">
+              {line}
+            </div>
           ))
         )}
-        <div ref={logEndRef} />
+        <div ref={endRef} />
       </div>
     </div>
   )

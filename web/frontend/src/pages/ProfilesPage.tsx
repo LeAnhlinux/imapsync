@@ -73,7 +73,7 @@ export function ProfilesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">Profiles</h2>
+        <h1 className="text-xl font-semibold tracking-tight">Profiles</h1>
         <Button onClick={() => { resetForm(); setShowForm(!showForm) }}>
           {showForm ? 'Cancel' : 'New Profile'}
         </Button>

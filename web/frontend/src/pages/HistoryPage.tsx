@@ -1,7 +1,21 @@
 import { useEffect, useState } from 'react'
+import { History, Search, X } from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { StatusBadge } from '@/components/ui/badge'
+import {
+  EmptyState,
+  PageHeader,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  Tr,
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+} from '@/components/ui/data'
 
 interface Job {
   id: number
@@ -17,117 +31,212 @@ interface Job {
   profile_id: number | null
 }
 
+const STATUSES = ['completed', 'failed', 'aborted', 'interrupted', 'running']
+
 export function HistoryPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [page, setPage] = useState(1)
-  const [filter, setFilter] = useState('')
-  const [selectedLog, setSelectedLog] = useState<{ id: number; log: string } | null>(null)
+  const [status, setStatus] = useState('')
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [log, setLog] = useState<{ id: number; text: string } | null>(null)
 
-  const load = () => {
+  useEffect(() => {
+    setLoading(true)
     const params: Record<string, unknown> = { page, per_page: 20 }
-    if (filter) params.status = filter
-    historyApi.list(params).then((r) => setJobs(r.data)).catch(() => {})
-  }
+    if (status) params.status = status
+    if (query) params.q = query
+    historyApi
+      .list(params)
+      .then((r) => setJobs(r.data))
+      .catch(() => setJobs([]))
+      .finally(() => setLoading(false))
+  }, [page, status, query])
 
-  useEffect(() => { load() }, [page, filter])
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-  }
-
-  const formatDuration = (start: string, end: string) => {
-    const sec = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000)
-    if (sec < 60) return `${sec}s`
-    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
-    const h = Math.floor(sec / 3600)
-    const m = Math.floor((sec % 3600) / 60)
-    return `${h}h ${m}m`
-  }
-
-  const viewLog = async (jobId: number) => {
-    const res = await syncApi.log(jobId)
-    setSelectedLog({ id: jobId, log: res.data.log })
-  }
-
-  const statusColor = (s: string) => {
-    switch (s) {
-      case 'completed': return 'text-green-600'
-      case 'failed': return 'text-red-600'
-      case 'aborted': return 'text-yellow-600'
-      default: return 'text-muted-foreground'
-    }
+  const viewLog = async (id: number) => {
+    const res = await syncApi.log(id)
+    setLog({ id, text: res.data.log })
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">History</h2>
-        <select
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          value={filter}
-          onChange={(e) => { setFilter(e.target.value); setPage(1) }}
-        >
-          <option value="">All</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
-          <option value="aborted">Aborted</option>
-        </select>
-      </div>
+    <div className="mx-auto max-w-6xl">
+      <PageHeader title="History" description="Every sync this account has run." />
 
-      {jobs.length === 0 ? (
-        <p className="text-muted-foreground">No sync history yet.</p>
-      ) : (
-        <div className="space-y-2">
-          <div className="grid grid-cols-9 gap-2 px-4 text-sm font-medium text-muted-foreground">
-            <span>ID</span><span>Status</span><span className="col-span-2">Source → Dest</span><span>Started</span><span>Duration</span>
-            <span>Messages</span><span>Data</span><span>Actions</span>
-          </div>
-          {jobs.map((j) => (
-            <Card key={j.id}>
-              <CardContent className="p-4 grid grid-cols-9 gap-2 items-center text-sm">
-                <span>#{j.id}</span>
-                <span className={`font-medium ${statusColor(j.status)}`}>{j.status}</span>
-                <span className="col-span-2 truncate text-xs" title={`${j.source_account || '-'} → ${j.dest_account || '-'}`}>
-                  <span className="font-medium">{j.source_account || '-'}</span>
-                  <span className="text-muted-foreground mx-1">→</span>
-                  <span className="font-medium">{j.dest_account || '-'}</span>
-                </span>
-                <span className="text-xs">{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</span>
-                <span>
-                  {j.started_at && j.finished_at
-                    ? formatDuration(j.started_at, j.finished_at)
-                    : '-'}
-                </span>
-                <span>{j.messages_transferred}</span>
-                <span>{formatBytes(j.bytes_transferred)}</span>
-                <Button size="sm" variant="outline" onClick={() => viewLog(j.id)}>Log</Button>
-              </CardContent>
-            </Card>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            className="pl-8"
+            placeholder="Search account or summary…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(1)
+            }}
+            aria-label="Search history"
+          />
+        </div>
+
+        {/* Status is a small closed set, so chips beat a select: one tap, and
+            the active filter is visible without opening anything. */}
+        <div className="flex flex-wrap gap-1">
+          <button
+            onClick={() => {
+              setStatus('')
+              setPage(1)
+            }}
+            className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+              status === ''
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-subtle text-muted-foreground hover:bg-accent'
+            }`}
+          >
+            All
+          </button>
+          {STATUSES.map((s) => (
+            <button
+              key={s}
+              onClick={() => {
+                setStatus(s)
+                setPage(1)
+              }}
+              className={`rounded-full px-2.5 py-1 text-xs capitalize transition-colors ${
+                status === s
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-subtle text-muted-foreground hover:bg-accent'
+              }`}
+            >
+              {s}
+            </button>
           ))}
         </div>
-      )}
-
-      <div className="flex justify-center gap-2 mt-4">
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-        <span className="text-sm py-2">Page {page}</span>
-        <Button variant="outline" size="sm" disabled={jobs.length < 20} onClick={() => setPage(page + 1)}>Next</Button>
       </div>
 
-      {/* Log modal */}
-      {selectedLog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setSelectedLog(null)}>
-          <div className="bg-card rounded-lg w-[90vw] max-w-4xl max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="font-bold">Job #{selectedLog.id} Log</h3>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedLog(null)}>Close</Button>
-            </div>
-            <div className="p-4 overflow-auto max-h-[70vh]">
-              <pre className="text-xs font-mono whitespace-pre-wrap">{selectedLog.log || 'No log available.'}</pre>
-            </div>
+      <div className="rounded-lg border border-border bg-card">
+        {loading ? (
+          <TableSkeleton rows={6} cols={5} />
+        ) : jobs.length === 0 ? (
+          <EmptyState
+            icon={History}
+            title={status || query ? 'No jobs match that filter' : 'No jobs yet'}
+            description={
+              status || query
+                ? 'Try a different status or clear the search.'
+                : 'Once you run a sync it will be recorded here.'
+            }
+            action={
+              (status || query) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setStatus('')
+                    setQuery('')
+                  }}
+                >
+                  Clear filters
+                </Button>
+              )
+            }
+          />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th className="w-14" align="right">
+                  #
+                </Th>
+                <Th>Route</Th>
+                <Th>Status</Th>
+                <Th align="right">Messages</Th>
+                <Th align="right">Data</Th>
+                <Th align="right">Took</Th>
+                <Th>Started</Th>
+                <Th />
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((j) => (
+                <Tr key={j.id}>
+                  <Td align="right" mono className="text-muted-foreground">
+                    {j.id}
+                  </Td>
+                  <Td>
+                    <p className="truncate text-sm">{j.source_account ?? '—'}</p>
+                    <p className="truncate text-xs text-muted-foreground">→ {j.dest_account ?? '—'}</p>
+                  </Td>
+                  <Td>
+                    <StatusBadge status={j.status} />
+                    {j.errors_count > 0 && (
+                      <span className="ml-1.5 text-xs text-danger">{j.errors_count} err</span>
+                    )}
+                  </Td>
+                  <Td align="right" className="tabular">
+                    {j.messages_transferred.toLocaleString()}
+                  </Td>
+                  <Td align="right" className="tabular text-muted-foreground">
+                    {formatBytes(j.bytes_transferred)}
+                  </Td>
+                  <Td align="right" className="tabular text-muted-foreground">
+                    {formatDuration(j.started_at, j.finished_at)}
+                  </Td>
+                  <Td mono className="whitespace-nowrap text-muted-foreground">
+                    {formatDateTime(j.started_at)}
+                  </Td>
+                  <Td align="right">
+                    <Button variant="ghost" size="sm" onClick={() => viewLog(j.id)}>
+                      Log
+                    </Button>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">Page {page}</p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page === 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={jobs.length < 20}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+
+      {log && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setLog(null)}
+            aria-label="Close log"
+          />
+          <div className="relative flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg border border-border bg-card shadow-xl">
+            <header className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-sm font-semibold">Log for job #{log.id}</h2>
+              <Button variant="ghost" size="icon" onClick={() => setLog(null)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </Button>
+            </header>
+            <pre className="flex-1 overflow-auto bg-subtle p-4 font-mono text-xs leading-relaxed">
+              {log.text || 'No log recorded for this job.'}
+            </pre>
           </div>
         </div>
       )}

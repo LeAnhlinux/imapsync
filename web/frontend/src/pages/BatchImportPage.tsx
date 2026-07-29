@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { batchApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/data'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
 interface BatchRun {
@@ -82,8 +83,8 @@ export function BatchImportPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">Batch Import</h2>
+    <div className="mx-auto max-w-3xl">
+      <PageHeader title="Batch Import" description="Migrate many mailboxes from one CSV." />
 
       <Card className="mb-6">
         <CardHeader>

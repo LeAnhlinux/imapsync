@@ -1,6 +1,29 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Activity,
+  ArrowRight,
+  CheckCircle2,
+  Database,
+  Inbox,
+  Mail,
+  PlayCircle,
+  XCircle,
+} from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { StatusBadge } from '@/components/ui/badge'
+import {
+  EmptyState,
+  PageHeader,
+  Skeleton,
+  Stat,
+  Table,
+  Td,
+  Th,
+  Tr,
+  formatBytes,
+  formatDuration,
+} from '@/components/ui/data'
 
 interface Stats {
   total_syncs: number
@@ -11,79 +34,180 @@ interface Stats {
   success_rate: number
 }
 
+interface Job {
+  id: number
+  status: string
+  source_account: string | null
+  dest_account: string | null
+  started_at: string | null
+  finished_at: string | null
+  messages_transferred: number
+}
+
 export function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
-  const [runningCount, setRunningCount] = useState(0)
+  const [running, setRunning] = useState<Job[]>([])
+  const [recent, setRecent] = useState<Job[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    historyApi.stats().then((r) => setStats(r.data)).catch(() => {})
-    syncApi.running().then((r) => setRunningCount(r.data.length)).catch(() => {})
+    const load = () => {
+      Promise.allSettled([
+        historyApi.stats(),
+        syncApi.running(),
+        historyApi.list({ per_page: 5 }),
+      ]).then(([s, r, h]) => {
+        if (s.status === 'fulfilled') setStats(s.value.data)
+        if (r.status === 'fulfilled') setRunning(r.value.data)
+        if (h.status === 'fulfilled') setRecent(h.value.data)
+        setLoading(false)
+      })
+    }
+    load()
+    // Running jobs move on their own, so the dashboard refreshes itself rather
+    // than going stale until someone reloads the page.
+    const t = setInterval(load, 10000)
+    return () => clearInterval(t)
   }, [])
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-  }
-
   return (
-    <div>
-      <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
+    <div className="mx-auto max-w-6xl">
+      <PageHeader
+        title="Dashboard"
+        description="Migration activity across all your mailboxes."
+        actions={
+          <Link
+            to="/sync/new"
+            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <PlayCircle className="mr-1.5 h-4 w-4" />
+            New Sync
+          </Link>
+        }
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Syncs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats?.total_syncs ?? '-'}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Success Rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {stats ? `${stats.success_rate.toFixed(1)}%` : '-'}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Messages Transferred</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats?.total_messages?.toLocaleString() ?? '-'}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Data Transferred</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats ? formatBytes(stats.total_bytes) : '-'}</div>
-          </CardContent>
-        </Card>
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {loading ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px]" />)
+        ) : (
+          <>
+            <Stat
+              label="Total syncs"
+              value={stats?.total_syncs ?? 0}
+              hint={`${stats?.successful ?? 0} completed · ${stats?.failed ?? 0} failed`}
+              icon={Activity}
+            />
+            <Stat
+              label="Success rate"
+              value={`${(stats?.success_rate ?? 0).toFixed(1)}%`}
+              icon={stats && stats.failed > 0 ? XCircle : CheckCircle2}
+              tone={
+                !stats?.total_syncs ? 'default' : stats.success_rate >= 90 ? 'success' : 'danger'
+              }
+            />
+            <Stat
+              label="Messages"
+              value={(stats?.total_messages ?? 0).toLocaleString()}
+              hint="transferred in total"
+              icon={Mail}
+            />
+            <Stat
+              label="Data"
+              value={formatBytes(stats?.total_bytes ?? 0)}
+              hint="transferred in total"
+              icon={Database}
+            />
+          </>
+        )}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Running Jobs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {runningCount > 0 ? (
-            <p className="text-muted-foreground">{runningCount} job(s) currently running</p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-lg border border-border bg-card">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Running now</h2>
+            {running.length > 0 && (
+              <Link to="/jobs" className="text-xs text-primary hover:underline">
+                View all
+              </Link>
+            )}
+          </header>
+          {running.length === 0 ? (
+            <EmptyState
+              icon={Inbox}
+              title="Nothing running"
+              description="Start a sync and it will appear here with live progress."
+              action={
+                <Link
+                  to="/sync/new"
+                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
+                >
+                  Start a sync
+                </Link>
+              }
+            />
           ) : (
-            <p className="text-muted-foreground">No jobs currently running</p>
+            <ul className="divide-y divide-border">
+              {running.map((j) => (
+                <li key={j.id} className="flex items-center gap-3 px-4 py-3">
+                  <StatusBadge status={j.status} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{j.source_account}</p>
+                    <p className="truncate text-xs text-muted-foreground">→ {j.dest_account}</p>
+                  </div>
+                  <span className="tabular shrink-0 text-xs text-muted-foreground">
+                    {formatDuration(j.started_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
-        </CardContent>
-      </Card>
+        </section>
+
+        <section className="rounded-lg border border-border bg-card">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Recent jobs</h2>
+            <Link
+              to="/history"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              History <ArrowRight className="h-3 w-3" />
+            </Link>
+          </header>
+          {recent.length === 0 ? (
+            <EmptyState
+              icon={Activity}
+              title="No jobs yet"
+              description="Finished syncs will be listed here."
+            />
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Job</Th>
+                  <Th>Status</Th>
+                  <Th align="right">Messages</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((j) => (
+                  <Tr key={j.id}>
+                    <Td>
+                      <p className="truncate text-sm">{j.source_account ?? `Job #${j.id}`}</p>
+                      <p className="truncate text-xs text-muted-foreground">→ {j.dest_account}</p>
+                    </Td>
+                    <Td>
+                      <StatusBadge status={j.status} />
+                    </Td>
+                    <Td align="right" className="tabular">
+                      {j.messages_transferred.toLocaleString()}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </section>
+      </div>
     </div>
   )
 }

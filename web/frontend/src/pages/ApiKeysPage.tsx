@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiKeyApi, webhookApi, type ApiKey, type Webhook } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/data'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
@@ -90,8 +91,8 @@ export function ApiKeysPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <h2 className="text-2xl font-bold">API Access</h2>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <PageHeader title="API Access" description="Keys for programs, and webhooks for job events." />
 
       {/* ------------------------------------------------------- API keys */}
       <Card>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/ui/data'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { profileApi, syncApi } from '@/lib/api'
@@ -77,8 +78,8 @@ export function NewSyncPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold mb-6">New Sync</h2>
+    <div className="mx-auto max-w-2xl">
+      <PageHeader title="New Sync" description="Copy one mailbox to another, now." />
 
       {/* Step indicators */}
       <div className="flex gap-2 mb-6">

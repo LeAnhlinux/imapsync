@@ -58,7 +58,7 @@ export function SchedulesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">Schedules</h2>
+        <h1 className="text-xl font-semibold tracking-tight">Schedules</h1>
         <Button onClick={() => setShowForm(!showForm)}>
           {showForm ? 'Cancel' : 'New Schedule'}
         </Button>
