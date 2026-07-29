@@ -159,10 +159,12 @@ type Stats struct {
 
 func (db *DB) Stats(userID int64) (*Stats, error) {
 	var s Stats
+	// Every SUM needs COALESCE: over zero rows SUM returns NULL, not 0, and a
+	// brand-new account has zero rows.
 	err := db.QueryRow(`SELECT
 		COUNT(*),
-		SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),
+		COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(messages_transferred),0),
 		COALESCE(SUM(bytes_transferred),0)
 		FROM sync_jobs WHERE user_id=?`, userID).

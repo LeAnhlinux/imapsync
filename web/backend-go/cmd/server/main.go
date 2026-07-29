@@ -17,6 +17,7 @@ import (
 	"github.com/imapsync/web-backend/internal/security"
 	"github.com/imapsync/web-backend/internal/services"
 	"github.com/imapsync/web-backend/internal/store"
+	"github.com/imapsync/web-backend/internal/telegram"
 )
 
 func main() {
@@ -52,13 +53,24 @@ func main() {
 	scheduler.Start()
 	defer scheduler.Stop()
 
+	batch := &services.Batch{DB: db, Sec: sec, Starter: starter, Runner: run}
+
+	// The bot reads its settings from the database, so it is a no-op until one
+	// is saved on the Settings page.
+	bot := telegram.New(db, sec, run, starter, batch)
+	completion.Notify = bot.NotifyJobFinished
+	run.OnProgress = bot.OnProgress
+	bot.Start()
+	defer bot.Stop()
+
 	srv := &api.Server{
 		Cfg: cfg, DB: db, Sec: sec, Runner: run,
 		Starter: starter,
-		Batch:   &services.Batch{DB: db, Sec: sec, Starter: starter, Runner: run},
+		Batch:   batch,
 		Folders: &services.Folders{ImapsyncPath: cfg.ImapsyncPath, TmpDir: cfg.TmpDir()},
 		Mailer:  mailer,
 		Cron:    scheduler,
+		Bot:     bot,
 	}
 
 	httpServer := &http.Server{

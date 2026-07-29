@@ -7,13 +7,15 @@ Type=simple
 User=imapsync
 WorkingDirectory=__INSTALL_DIR__
 EnvironmentFile=__INSTALL_DIR__/.env
-# Single worker on purpose: the running-job registry, the WebSocket subscribers
-# and the APScheduler instance all live in process memory. With more than one
-# worker, /abort and the log stream hit the wrong process and every schedule
-# fires once per worker.
-ExecStart=__INSTALL_DIR__/venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=__INSTALL_DIR__/imapsync-web
 Restart=always
 RestartSec=5
+
+# The binary is static and only needs its own data directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=__INSTALL_DIR__/data
 
 [Install]
 WantedBy=multi-user.target
