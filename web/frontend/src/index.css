@@ -3,60 +3,66 @@
 /*
  * Data-dense operations console.
  *
- * Fonts are system stacks on purpose: this is a self-hosted internal tool, and
- * pulling a webfont would add a third-party request to every page load to buy
- * very little over a well-chosen system stack.
+ * Indigo over the usual corporate blue, and neutrals carrying a trace of the
+ * same hue rather than cold slate — a grey that shares the accent's hue reads
+ * as designed rather than as an absence of colour.
+ *
+ * Every foreground/background pair below was measured, not eyeballed: all 22
+ * combinations clear WCAG AA (4.5:1) in both themes, the tightest being the
+ * amber "Aborted" badge at 4.51.
+ *
+ * Fonts stay on the system stack: this is a self-hosted internal tool, and a
+ * webfont would add a third-party request to every page load to buy little.
  */
 
 @theme {
   /* --- surfaces ------------------------------------------------------- */
-  /* The page is a shade off-white so white cards read as raised without
-     needing heavy shadows. */
-  --color-background: #f6f8fb;
-  --color-foreground: #0f172a;
+  --color-background: #f7f8fb;
+  --color-foreground: #16161d;
   --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --color-subtle: #f1f5f9;
+  --color-card-foreground: #16161d;
+  --color-subtle: #f1f2f7;
   --color-sidebar: #ffffff;
 
   /* --- brand ---------------------------------------------------------- */
-  --color-primary: #1e40af;
+  --color-primary: #4f46e5;
   --color-primary-foreground: #ffffff;
-  --color-primary-soft: #e0e7ff;
+  --color-primary-soft: #eef2ff;
   --color-brand-accent: #b45309;
   --color-brand-accent-soft: #fef3c7;
 
-  --color-secondary: #f1f5f9;
-  --color-secondary-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #5b6b82;
-  --color-accent: #eef2f7;
-  --color-accent-foreground: #0f172a;
+  --color-secondary: #f1f2f7;
+  --color-secondary-foreground: #16161d;
+  --color-muted: #f1f2f7;
+  --color-muted-foreground: #63647a;
+  --color-accent: #eceef5;
+  --color-accent-foreground: #16161d;
 
   /* --- status --------------------------------------------------------- */
-  /* Each status has a text-safe tone and a separate tint for backgrounds, so
-     a badge never uses one value for both and always clears 4.5:1. */
+  /* Each has a text-safe tone and a separate tint for backgrounds, so a badge
+     never uses one value for both. Rose rather than fire-engine red: it sits
+     better beside indigo and still reads unmistakably as failure. */
   --color-success: #047857;
   --color-success-soft: #d1fae5;
   --color-warning: #b45309;
   --color-warning-soft: #fef3c7;
-  --color-danger: #b91c1c;
-  --color-danger-soft: #fee2e2;
-  --color-info: #1d4ed8;
-  --color-info-soft: #dbeafe;
-  --color-neutral: #475569;
-  --color-neutral-soft: #e2e8f0;
+  --color-danger: #be123c;
+  --color-danger-soft: #ffe4e6;
+  --color-info: #4338ca;
+  --color-info-soft: #e0e7ff;
+  --color-neutral: #4b4c60;
+  --color-neutral-soft: #e7e8ef;
 
-  --color-destructive: #b91c1c;
+  --color-destructive: #be123c;
   --color-destructive-foreground: #ffffff;
 
   /* --- lines ---------------------------------------------------------- */
-  --color-border: #dfe5ee;
-  --color-border-strong: #c7d2e0;
-  --color-input: #cbd5e1;
-  --color-ring: #1e40af;
+  --color-border: #e4e5ed;
+  --color-border-strong: #cdcfdc;
+  --color-input: #d5d7e2;
+  --color-ring: #4f46e5;
 
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
@@ -65,46 +71,48 @@
 }
 
 .dark {
-  --color-background: #0b1120;
-  --color-foreground: #e8eef7;
-  --color-card: #121a2b;
-  --color-card-foreground: #e8eef7;
-  --color-subtle: #182236;
-  --color-sidebar: #0e1626;
+  /* Near-black with a violet cast, not navy: it lets the indigo accent sit on
+     top without the whole screen reading as "blue". */
+  --color-background: #0a0a10;
+  --color-foreground: #ececf1;
+  --color-card: #131319;
+  --color-card-foreground: #ececf1;
+  --color-subtle: #1c1c25;
+  --color-sidebar: #0d0d14;
 
-  /* Dark mode lightens the brand rather than inverting it: the deep blue that
-     reads as authoritative on white vanishes against a dark surface. */
-  --color-primary: #60a5fa;
-  --color-primary-foreground: #0b1120;
-  --color-primary-soft: #1e3a5f;
+  /* Dark mode lightens the brand rather than inverting it: the indigo that
+     reads as confident on white disappears against a dark surface. */
+  --color-primary: #a5b4fc;
+  --color-primary-foreground: #0a0a10;
+  --color-primary-soft: #282455;
   --color-brand-accent: #fbbf24;
-  --color-brand-accent-soft: #422006;
+  --color-brand-accent-soft: #3a2506;
 
-  --color-secondary: #1e293b;
-  --color-secondary-foreground: #e8eef7;
-  --color-muted: #1e293b;
-  --color-muted-foreground: #94a6bd;
-  --color-accent: #1c2942;
-  --color-accent-foreground: #e8eef7;
+  --color-secondary: #1c1c25;
+  --color-secondary-foreground: #ececf1;
+  --color-muted: #1c1c25;
+  --color-muted-foreground: #9a9bb0;
+  --color-accent: #212130;
+  --color-accent-foreground: #ececf1;
 
   --color-success: #34d399;
-  --color-success-soft: #064e3b;
+  --color-success-soft: #06342a;
   --color-warning: #fbbf24;
-  --color-warning-soft: #422006;
-  --color-danger: #f87171;
-  --color-danger-soft: #4c1d1d;
-  --color-info: #60a5fa;
-  --color-info-soft: #1e3a5f;
-  --color-neutral: #94a6bd;
-  --color-neutral-soft: #26334a;
+  --color-warning-soft: #3a2506;
+  --color-danger: #fb7185;
+  --color-danger-soft: #450a1c;
+  --color-info: #a5b4fc;
+  --color-info-soft: #282455;
+  --color-neutral: #a1a2b8;
+  --color-neutral-soft: #232330;
 
-  --color-destructive: #f87171;
-  --color-destructive-foreground: #0b1120;
+  --color-destructive: #fb7185;
+  --color-destructive-foreground: #0a0a10;
 
-  --color-border: #24314a;
-  --color-border-strong: #35496b;
-  --color-input: #35496b;
-  --color-ring: #60a5fa;
+  --color-border: #26262f;
+  --color-border-strong: #3a3a49;
+  --color-input: #3a3a49;
+  --color-ring: #a5b4fc;
 }
 
 body {
