@@ -230,13 +230,26 @@ func str(v any) string {
 	return s
 }
 
+// Listing folders means SELECTing every one of them. On a Gmail account with
+// ~9k messages this was measured at four to five minutes, so the old 60s ceiling
+// meant the browser never returned anything for a real mailbox.
+const browseTimeout = 6 * time.Minute
+
 // Folders lists a mailbox's folders with imapsync --justfoldersizes.
 type Folders struct {
 	ImapsyncPath string
 	TmpDir       string
 }
 
-var folderSizePat = regexp.MustCompile(`(?m)^\s*(?:Host\d+:\s*)?(?:Strp\s+)*\[?([^\]\s]+)\]?\s+(?:has\s+)?(\d+)\s+messages?\s+(\d+)\s+bytes?`)
+// imapsync --justfoldersizes prints one aligned line per folder per host:
+//
+//	Host1 folder     4/5 [Sent Mail]      Size:      0 Messages:     0 Biggest:      0
+//
+// Only Host1 is read — browsing looks at one mailbox, and the runner passes the
+// same host twice to satisfy imapsync's two-sided interface. The name is taken
+// non-greedily up to the closing bracket because folder names contain spaces.
+var folderSizePat = regexp.MustCompile(
+	`(?m)^Host1 folder\s+\d+/\d+\s+\[(.*?)\]\s+Size:\s+(\d+)\s+Messages:\s+(\d+)`)
 
 func (f *Folders) Browse(host, user, password string, ssl bool) ([]api.FolderInfo, error) {
 	passfile, err := os.CreateTemp(f.TmpDir, "imapsync_browse_")
@@ -278,12 +291,13 @@ func (f *Folders) Browse(host, user, password string, ssl bool) ([]api.FolderInf
 
 	select {
 	case <-done:
-	case <-time.After(60 * time.Second):
+	case <-time.After(browseTimeout):
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
 		<-done
-		return nil, fmt.Errorf("timed out talking to %s", host)
+		return nil, fmt.Errorf("timed out after %s talking to %s. Large mailboxes can take several minutes to list",
+			browseTimeout, host)
 	}
 
 	folders := parseFolderSizes(string(out))
@@ -297,13 +311,13 @@ func parseFolderSizes(output string) []api.FolderInfo {
 	seen := map[string]bool{}
 	var folders []api.FolderInfo
 	for _, m := range folderSizePat.FindAllStringSubmatch(output, -1) {
-		name := strings.Trim(m[1], "[]")
+		name := strings.TrimSpace(m[1])
 		if name == "" || seen[name] {
 			continue
 		}
 		seen[name] = true
-		messages, _ := strconv.Atoi(m[2])
-		size, _ := strconv.ParseInt(m[3], 10, 64)
+		size, _ := strconv.ParseInt(m[2], 10, 64)
+		messages, _ := strconv.Atoi(m[3])
 		folders = append(folders, api.FolderInfo{Name: name, Messages: messages, Size: size})
 	}
 	return folders

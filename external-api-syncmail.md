@@ -351,7 +351,11 @@ On `PUT`, omitting a password keeps the stored one.
 ### `POST /api/folders/browse` — scope `profiles:read`
 
 Lists a mailbox's folders and their sizes, for building a `folders` selection.
-Takes up to 60 seconds; it opens a real IMAP connection.
+
+**This is slow.** It opens a real IMAP connection and SELECTs every folder; a
+Gmail account with ~9,000 messages was measured at four to five minutes. The
+request is held open for up to six minutes before giving up, so call it
+asynchronously and tell your user to wait.
 
 ```json
 { "host": "mail.old.com", "user": "me@old.com", "password": "secret", "ssl": true }
