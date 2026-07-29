@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, PlayCircle, Upload } from 'lucide-react'
 import { batchApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/ui/data'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Badge, StatusBadge } from '@/components/ui/badge'
+import { PageHeader, Progress, Stat } from '@/components/ui/data'
+import { cn } from '@/lib/utils'
 
 interface BatchRun {
   id: number
@@ -13,68 +15,83 @@ interface BatchRun {
   status: string
 }
 
+const SAMPLE = `# host1;user1;password1;host2;user2;password2
+mail.old.com;a@old.com;pw1;mail.new.com;a@new.com;pw2
+mail.old.com;b@old.com;pw3;mail.new.com;b@new.com;pw4`
+
 export function BatchImportPage() {
   const [file, setFile] = useState<File | null>(null)
   const [csvText, setCsvText] = useState('')
-  const [inputMode, setInputMode] = useState<'file' | 'paste'>('paste')
+  const [mode, setMode] = useState<'file' | 'paste'>('paste')
+  const [dragging, setDragging] = useState(false)
+
   const [dryRun, setDryRun] = useState(false)
   const [ssl1, setSsl1] = useState(true)
   const [ssl2, setSsl2] = useState(true)
   const [automap, setAutomap] = useState(true)
   const [usecache, setUsecache] = useState(true)
+
   const [batch, setBatch] = useState<BatchRun | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const handleUpload = async () => {
+  // Leaving the page mid-run must not leave a timer firing forever.
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+  }, [])
+
+  const upload = async () => {
     setLoading(true)
     setError('')
     try {
       let res
-      if (inputMode === 'paste' && csvText.trim()) {
+      if (mode === 'paste' && csvText.trim()) {
         res = await batchApi.uploadText(csvText, dryRun, ssl1, ssl2, automap, usecache)
-      } else if (inputMode === 'file' && file) {
+      } else if (mode === 'file' && file) {
         res = await batchApi.upload(file, dryRun, ssl1, ssl2, automap, usecache)
       } else {
-        setError('Please provide CSV data')
+        setError('Add some CSV rows first — paste them or drop a file.')
         setLoading(false)
         return
       }
       setBatch(res.data)
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed')
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not read that CSV.',
+      )
     } finally {
       setLoading(false)
     }
   }
 
-  const handleStart = async () => {
+  const start = async () => {
     if (!batch) return
     setLoading(true)
     try {
       const res = await batchApi.start(batch.id)
       setBatch(res.data)
-      // Poll for updates
       pollRef.current = setInterval(async () => {
         try {
           const r = await batchApi.get(batch.id)
           setBatch(r.data)
-          if (r.data.status !== 'running') {
-            if (pollRef.current) clearInterval(pollRef.current)
-          }
+          if (r.data.status !== 'running' && pollRef.current) clearInterval(pollRef.current)
         } catch {
           if (pollRef.current) clearInterval(pollRef.current)
         }
       }, 3000)
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Start failed')
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not start the batch.',
+      )
     } finally {
       setLoading(false)
     }
   }
 
-  const handleReset = () => {
+  const reset = () => {
     setBatch(null)
     setFile(null)
     setCsvText('')
@@ -82,57 +99,149 @@ export function BatchImportPage() {
     if (pollRef.current) clearInterval(pollRef.current)
   }
 
+  const done = batch ? batch.completed_rows + batch.failed_rows : 0
+  const pct = batch && batch.total_rows ? (done / batch.total_rows) * 100 : 0
+
+  /* ------------------------------------------------ after upload: review */
+  if (batch) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <PageHeader
+          title="Batch Import"
+          description={`${batch.filename} — ${batch.total_rows} mailbox(es)`}
+          actions={
+            <Button variant="outline" onClick={reset}>
+              Start over
+            </Button>
+          }
+        />
+
+        <div className="rounded-lg border border-border bg-card">
+          <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
+            <StatusBadge status={batch.status} />
+            {dryRun && <Badge tone="warning">Dry run</Badge>}
+            <span className="ml-auto text-xs text-muted-foreground">Batch #{batch.id}</span>
+          </header>
+
+          <div className="space-y-4 p-4">
+            <div className="grid grid-cols-3 gap-3">
+              <Stat label="Total" value={batch.total_rows} />
+              <Stat
+                label="Completed"
+                value={batch.completed_rows}
+                icon={CheckCircle2}
+                tone={batch.completed_rows > 0 ? 'success' : 'default'}
+              />
+              <Stat
+                label="Failed"
+                value={batch.failed_rows}
+                icon={AlertCircle}
+                tone={batch.failed_rows > 0 ? 'danger' : 'default'}
+              />
+            </div>
+
+            {batch.status === 'running' && (
+              <Progress value={pct} label={`${done} of ${batch.total_rows} mailboxes`} />
+            )}
+
+            {batch.status === 'pending' && (
+              <>
+                <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+                  Nothing has run yet. Starting will process {batch.total_rows} mailbox
+                  {batch.total_rows === 1 ? '' : 'es'}, one at a time
+                  {dryRun ? ', writing nothing.' : ', writing into each destination.'}
+                </p>
+                <Button onClick={start} disabled={loading}>
+                  {loading ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  ) : (
+                    <PlayCircle className="mr-1.5 h-4 w-4" />
+                  )}
+                  Run batch
+                </Button>
+              </>
+            )}
+
+            {batch.status === 'completed' && (
+              <p className="text-sm text-muted-foreground">
+                Finished. Each mailbox is a separate job in History.
+              </p>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  /* ---------------------------------------------------- before upload */
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Batch Import" description="Migrate many mailboxes from one CSV." />
 
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>CSV Data</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Format (semicolon separated):{' '}
-            <code className="text-xs bg-muted px-1 py-0.5 rounded">host1;user1;password1;host2;user2;password2</code>
-            <br />
-            Lines starting with <code className="text-xs bg-muted px-1 py-0.5 rounded">#</code> are comments. Empty lines are skipped.
-          </p>
-
-          {/* Input mode toggle */}
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={inputMode === 'paste' ? 'default' : 'outline'}
-              onClick={() => setInputMode('paste')}
+      <div className="mb-4 rounded-lg border border-border bg-card">
+        <header className="flex items-center gap-1 border-b border-border px-2 py-2">
+          {(['paste', 'file'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-sm transition-colors',
+                mode === m
+                  ? 'bg-primary-soft font-medium text-primary'
+                  : 'text-muted-foreground hover:bg-accent',
+              )}
             >
-              Paste Text
-            </Button>
-            <Button
-              size="sm"
-              variant={inputMode === 'file' ? 'default' : 'outline'}
-              onClick={() => setInputMode('file')}
-            >
-              Upload File
-            </Button>
-          </div>
+              {m === 'paste' ? 'Paste rows' : 'Upload file'}
+            </button>
+          ))}
+        </header>
 
-          {inputMode === 'paste' ? (
-            <textarea
-              className="w-full h-48 p-3 border border-border rounded-md bg-background font-mono text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder={`# Example:\nimap.gmail.com;user1@gmail.com;pass1;imap.other.com;user2@other.com;pass2\nimap.yandex.com;user3@yandex.com;pass3;mail.server.com;user3@server.com;pass3`}
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-            />
+        <div className="space-y-3 p-4">
+          {mode === 'paste' ? (
+            <>
+              <textarea
+                value={csvText}
+                onChange={(e) => setCsvText(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                placeholder={SAMPLE}
+                className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs leading-relaxed"
+                aria-label="CSV rows"
+              />
+              {!csvText && (
+                <Button variant="outline" size="sm" onClick={() => setCsvText(SAMPLE)}>
+                  Insert example
+                </Button>
+              )}
+            </>
           ) : (
             <div
-              className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary transition-colors"
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragging(true)
+              }}
+              onDragLeave={() => setDragging(false)}
               onDrop={(e) => {
                 e.preventDefault()
+                setDragging(false)
                 const f = e.dataTransfer.files[0]
                 if (f) setFile(f)
               }}
               onClick={() => document.getElementById('csv-input')?.click()}
+              className={cn(
+                'cursor-pointer rounded-lg border-2 border-dashed p-8 text-center transition-colors',
+                dragging ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary',
+              )}
             >
               <input
                 id="csv-input"
@@ -141,134 +250,75 @@ export function BatchImportPage() {
                 className="hidden"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
               />
+              <Upload className="mx-auto mb-2 h-6 w-6 text-muted-foreground" aria-hidden />
               {file ? (
-                <p className="font-medium">{file.name} ({(file.size / 1024).toFixed(1)} KB)</p>
+                <p className="text-sm font-medium">{file.name}</p>
               ) : (
-                <p className="text-muted-foreground">Drop CSV file here or click to browse</p>
+                <>
+                  <p className="text-sm font-medium">Drop a .csv here</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">or click to choose a file</p>
+                </>
               )}
             </div>
           )}
 
-          {/* Options */}
-          <div className="flex flex-wrap gap-x-6 gap-y-3 pt-2">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={automap}
-                onChange={(e) => setAutomap(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              <span className="text-sm font-medium">Automap</span>
-              <span className="text-xs text-muted-foreground">(auto map Sent/Drafts/Junk folders)</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={usecache}
-                onChange={(e) => setUsecache(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              <span className="text-sm font-medium">Use Cache</span>
-              <span className="text-xs text-muted-foreground">(faster re-syncs)</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={ssl1}
-                onChange={(e) => setSsl1(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              <span className="text-sm font-medium">SSL Host1</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={ssl2}
-                onChange={(e) => setSsl2(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              <span className="text-sm font-medium">SSL Host2</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={dryRun}
-                onChange={(e) => setDryRun(e.target.checked)}
-                className="w-4 h-4 rounded border-border"
-              />
-              <span className="text-sm font-medium">Dry Run</span>
-              <span className="text-xs text-muted-foreground">(simulate only)</span>
-            </label>
+          <div className="rounded-md bg-subtle p-3 text-xs text-muted-foreground">
+            <p className="mb-1 font-medium text-foreground">Format</p>
+            <code className="font-mono">host1;user1;password1;host2;user2;password2</code>
+            <p className="mt-1.5">
+              One mailbox per line. Lines starting with <code className="font-mono">#</code> are
+              comments. A seventh column can carry extra imapsync options.
+            </p>
           </div>
+        </div>
+      </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+      <div className="mb-4 rounded-lg border border-border bg-card p-4">
+        <p className="mb-3 text-sm font-medium">Applies to every row</p>
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          {[
+            { v: dryRun, set: setDryRun, label: 'Dry run', hint: 'Report only, write nothing' },
+            { v: automap, set: setAutomap, label: 'Automap folders', hint: 'Match Sent/Drafts/Trash' },
+            { v: usecache, set: setUsecache, label: 'Use cache', hint: 'Skip already-copied messages' },
+            { v: ssl1, set: setSsl1, label: 'TLS on source', hint: 'Encrypt the source connection' },
+            { v: ssl2, set: setSsl2, label: 'TLS on destination', hint: 'Encrypt the destination' },
+          ].map((o) => (
+            <label key={o.label} className="flex items-start gap-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={o.v}
+                onChange={(e) => o.set(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <span>
+                {o.label}
+                <span className="block text-xs text-muted-foreground">{o.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
 
-          {!batch && (
-            <Button onClick={handleUpload} disabled={loading || (inputMode === 'paste' ? !csvText.trim() : !file)}>
-              {loading ? 'Processing...' : 'Upload & Parse'}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {batch && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Batch: {batch.filename}</CardTitle>
-              {(batch.status === 'completed' || batch.status === 'failed') && (
-                <Button size="sm" variant="outline" onClick={handleReset}>
-                  New Batch
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <strong>Status:</strong>{' '}
-                <span className={
-                  batch.status === 'completed' ? 'text-green-600' :
-                  batch.status === 'failed' ? 'text-destructive' :
-                  batch.status === 'running' ? 'text-blue-600' : ''
-                }>
-                  {batch.status}
-                </span>
-              </div>
-              <div><strong>Total rows:</strong> {batch.total_rows}</div>
-              <div><strong>Completed:</strong> <span className="text-green-600">{batch.completed_rows}</span></div>
-              <div><strong>Failed:</strong> <span className="text-destructive">{batch.failed_rows}</span></div>
-            </div>
-
-            {dryRun && (
-              <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950 px-3 py-2 rounded">
-                ⚡ Dry Run mode — no messages will be transferred
-              </div>
-            )}
-
-            {batch.status === 'running' && (
-              <div>
-                <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                  <span>Progress</span>
-                  <span>{batch.completed_rows + batch.failed_rows} / {batch.total_rows}</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2.5">
-                  <div
-                    className="bg-primary h-2.5 rounded-full transition-all duration-500"
-                    style={{ width: `${batch.total_rows > 0 ? ((batch.completed_rows + batch.failed_rows) / batch.total_rows) * 100 : 0}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {batch.status === 'pending' && (
-              <Button onClick={handleStart} disabled={loading}>
-                {loading ? 'Starting...' : `Start Batch (${batch.total_rows} jobs)`}
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+      {error && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
       )}
+
+      {/* Uploading only parses and previews; nothing runs until you confirm on
+          the next screen. */}
+      <Button onClick={upload} disabled={loading}>
+        {loading ? (
+          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+        ) : (
+          <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+        )}
+        Parse rows
+      </Button>
     </div>
   )
 }

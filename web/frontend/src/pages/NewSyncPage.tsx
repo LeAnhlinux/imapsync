@@ -1,21 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AlertCircle, ArrowRight, Check, Loader2, PlayCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { PageHeader } from '@/components/ui/data'
 import { Input } from '@/components/ui/input'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { PageHeader } from '@/components/ui/data'
 import { profileApi, syncApi } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 interface Profile {
   id: number
   name: string
   host1: string
   user1: string
+  ssl1: boolean
   host2: string
   user2: string
+  ssl2: boolean
 }
 
-type Step = 'credentials' | 'options' | 'review'
+const STEPS = [
+  { key: 'credentials', label: 'Mailboxes' },
+  { key: 'options', label: 'Options' },
+  { key: 'review', label: 'Review' },
+] as const
+
+type Step = (typeof STEPS)[number]['key']
 
 export function NewSyncPage() {
   const navigate = useNavigate()
@@ -25,7 +35,6 @@ export function NewSyncPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Credentials
   const [host1, setHost1] = useState('')
   const [user1, setUser1] = useState('')
   const [password1, setPassword1] = useState('')
@@ -35,7 +44,6 @@ export function NewSyncPage() {
   const [password2, setPassword2] = useState('')
   const [ssl2, setSsl2] = useState(true)
 
-  // Options
   const [dryRun, setDryRun] = useState(false)
   const [automap, setAutomap] = useState(true)
   const [usecache, setUsecache] = useState(true)
@@ -45,18 +53,28 @@ export function NewSyncPage() {
     profileApi.list().then((r) => setProfiles(r.data)).catch(() => {})
   }, [])
 
-  const handleProfileSelect = (profileId: number) => {
-    setSelectedProfile(profileId)
-    const p = profiles.find((pr) => pr.id === profileId)
+  const pickProfile = (id: number | null) => {
+    setSelectedProfile(id)
+    const p = profiles.find((pr) => pr.id === id)
     if (p) {
       setHost1(p.host1)
       setUser1(p.user1)
       setHost2(p.host2)
       setUser2(p.user2)
+      // The TLS flags come from the profile too, or the review step would
+      // claim an encrypted connection the sync is not going to make.
+      setSsl1(p.ssl1)
+      setSsl2(p.ssl2)
     }
   }
 
-  const handleStart = async () => {
+  // With a profile chosen the credentials come from the server, so the form
+  // only needs to be complete when there is no profile behind it.
+  const credentialsReady =
+    selectedProfile !== null ||
+    (host1 && user1 && password1 && host2 && user2 && password2)
+
+  const start = async () => {
     setLoading(true)
     setError('')
     try {
@@ -70,161 +88,294 @@ export function NewSyncPage() {
       const res = await syncApi.start(data)
       navigate(`/jobs?highlight=${res.data.id}`)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to start sync'
-      setError(msg)
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not start the sync.',
+      )
     } finally {
       setLoading(false)
     }
   }
 
+  const stepIndex = STEPS.findIndex((s) => s.key === step)
+
+  const mailbox = (which: 1 | 2) => {
+    const isSource = which === 1
+    return (
+      <div className="rounded-lg border border-border p-3">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {isSource ? 'Source (copied from)' : 'Destination (copied to)'}
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`h${which}`}>Host</label>
+            <Input
+              id={`h${which}`}
+              value={isSource ? host1 : host2}
+              onChange={(e) => (isSource ? setHost1 : setHost2)(e.target.value)}
+              placeholder={isSource ? 'imap.gmail.com' : 'mail.example.com'}
+              disabled={selectedProfile !== null}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`u${which}`}>Username</label>
+            <Input
+              id={`u${which}`}
+              value={isSource ? user1 : user2}
+              onChange={(e) => (isSource ? setUser1 : setUser2)(e.target.value)}
+              placeholder="me@example.com"
+              disabled={selectedProfile !== null}
+              autoComplete="off"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`p${which}`}>Password</label>
+            <Input
+              id={`p${which}`}
+              type="password"
+              value={isSource ? password1 : password2}
+              onChange={(e) => (isSource ? setPassword1 : setPassword2)(e.target.value)}
+              placeholder={selectedProfile !== null ? 'Stored in the profile' : ''}
+              disabled={selectedProfile !== null}
+              autoComplete="new-password"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={isSource ? ssl1 : ssl2}
+              onChange={(e) => (isSource ? setSsl1 : setSsl2)(e.target.checked)}
+              disabled={selectedProfile !== null}
+              className="h-4 w-4"
+            />
+            Use SSL/TLS
+          </label>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-3xl">
       <PageHeader title="New Sync" description="Copy one mailbox to another, now." />
 
-      {/* Step indicators */}
-      <div className="flex gap-2 mb-6">
-        {(['credentials', 'options', 'review'] as Step[]).map((s, i) => (
-          <div
-            key={s}
-            className={`flex-1 h-2 rounded ${
-              s === step ? 'bg-primary' : i < ['credentials', 'options', 'review'].indexOf(step) ? 'bg-primary/50' : 'bg-muted'
-            }`}
-          />
-        ))}
-      </div>
+      {/* Numbered steps rather than three bars: the bars showed progress but
+          never said what the steps were. */}
+      <ol className="mb-6 flex items-center gap-2">
+        {STEPS.map((s, i) => {
+          const done = i < stepIndex
+          const current = i === stepIndex
+          return (
+            <li key={s.key} className="flex flex-1 items-center gap-2">
+              <span
+                className={cn(
+                  'grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-medium',
+                  done && 'bg-primary text-primary-foreground',
+                  current && 'bg-primary-soft text-primary ring-2 ring-primary',
+                  !done && !current && 'bg-subtle text-muted-foreground',
+                )}
+              >
+                {done ? <Check className="h-3 w-3" /> : i + 1}
+              </span>
+              <span
+                className={cn(
+                  'text-sm',
+                  current ? 'font-medium' : 'text-muted-foreground',
+                )}
+              >
+                {s.label}
+              </span>
+              {i < STEPS.length - 1 && (
+                <span
+                  aria-hidden
+                  className={cn('h-px flex-1', done ? 'bg-primary' : 'bg-border')}
+                />
+              )}
+            </li>
+          )
+        })}
+      </ol>
 
-      {step === 'credentials' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 1: Credentials</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+      <div className="rounded-lg border border-border bg-card">
+        {step === 'credentials' && (
+          <div className="space-y-4 p-4">
             {profiles.length > 0 && (
               <div>
-                <label className="text-sm font-medium">Use saved profile</label>
+                <label className="mb-1 block text-sm font-medium" htmlFor="profile">
+                  Use a saved profile
+                </label>
                 <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  value={selectedProfile || ''}
-                  onChange={(e) => e.target.value ? handleProfileSelect(Number(e.target.value)) : setSelectedProfile(null)}
+                  id="profile"
+                  className="flex h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
+                  value={selectedProfile ?? ''}
+                  onChange={(e) => pickProfile(e.target.value ? Number(e.target.value) : null)}
                 >
-                  <option value="">-- Manual input --</option>
+                  <option value="">Enter credentials manually…</option>
                   {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.host1})</option>
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+                {selectedProfile !== null && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Credentials come from the profile; the fields below are read-only.
+                  </p>
+                )}
               </div>
             )}
 
-            {!selectedProfile && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h3 className="font-medium mb-2">Source (Host 1)</h3>
-                    <div className="space-y-2">
-                      <Input placeholder="IMAP Host" value={host1} onChange={(e) => setHost1(e.target.value)} />
-                      <Input placeholder="Username" value={user1} onChange={(e) => setUser1(e.target.value)} />
-                      <Input placeholder="Password" type="password" value={password1} onChange={(e) => setPassword1(e.target.value)} />
-                      <label className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={ssl1} onChange={(e) => setSsl1(e.target.checked)} />
-                        SSL/TLS
-                      </label>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-medium mb-2">Destination (Host 2)</h3>
-                    <div className="space-y-2">
-                      <Input placeholder="IMAP Host" value={host2} onChange={(e) => setHost2(e.target.value)} />
-                      <Input placeholder="Username" value={user2} onChange={(e) => setUser2(e.target.value)} />
-                      <Input placeholder="Password" type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} />
-                      <label className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={ssl2} onChange={(e) => setSsl2(e.target.checked)} />
-                        SSL/TLS
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="flex justify-end">
-              <Button onClick={() => setStep('options')}>Next</Button>
+            <div className="grid gap-3 md:grid-cols-2">
+              {mailbox(1)}
+              {mailbox(2)}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {step === 'options' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 2: Options</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-wrap gap-x-6 gap-y-3">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={automap} onChange={(e) => setAutomap(e.target.checked)} className="w-4 h-4" />
-                <span className="font-medium">Automap</span>
-                <span className="text-xs text-muted-foreground">(auto map Sent/Drafts/Junk)</span>
+        {step === 'options' && (
+          <div className="space-y-4 p-4">
+            <fieldset className="space-y-2.5">
+              <legend className="mb-1 text-sm font-medium">Behaviour</legend>
+              <label className="flex items-start gap-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={dryRun}
+                  onChange={(e) => setDryRun(e.target.checked)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span>
+                  Dry run
+                  <span className="block text-xs text-muted-foreground">
+                    Connect and report what would move, without writing anything.
+                  </span>
+                </span>
               </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={usecache} onChange={(e) => setUsecache(e.target.checked)} className="w-4 h-4" />
-                <span className="font-medium">Use Cache</span>
-                <span className="text-xs text-muted-foreground">(faster re-syncs)</span>
+              <label className="flex items-start gap-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={automap}
+                  onChange={(e) => setAutomap(e.target.checked)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span>
+                  Automap folders
+                  <span className="block text-xs text-muted-foreground">
+                    Match Sent, Drafts and Trash across servers that name them differently.
+                  </span>
+                </span>
               </label>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="w-4 h-4" />
-                <span className="font-medium">Dry Run</span>
-                <span className="text-xs text-muted-foreground">(simulate only)</span>
+              <label className="flex items-start gap-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={usecache}
+                  onChange={(e) => setUsecache(e.target.checked)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span>
+                  Use cache
+                  <span className="block text-xs text-muted-foreground">
+                    Skip messages a previous run already copied. Makes re-syncs much faster.
+                  </span>
+                </span>
               </label>
-            </div>
+            </fieldset>
 
             <div>
-              <label className="text-sm font-medium">Specific folders (one per line, leave empty for all)</label>
+              <label className="mb-1 block text-sm font-medium" htmlFor="folders">
+                Folders <span className="font-normal text-muted-foreground">(optional)</span>
+              </label>
               <textarea
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[100px]"
-                placeholder="INBOX&#10;Sent&#10;Drafts"
+                id="folders"
                 value={foldersText}
                 onChange={(e) => setFoldersText(e.target.value)}
+                rows={4}
+                placeholder={'INBOX\nSent'}
+                className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm"
               />
+              <p className="mt-1 text-xs text-muted-foreground">
+                One per line. Leave empty to sync every folder.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {step === 'review' && (
+          <div className="space-y-4 p-4">
+            <div className="rounded-lg border border-border">
+              <div className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">From</p>
+                  <p className="truncate text-sm font-medium">{user1 || '—'}</p>
+                  <p className="truncate text-xs text-muted-foreground">{host1 || '—'}</p>
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">To</p>
+                  <p className="truncate text-sm font-medium">{user2 || '—'}</p>
+                  <p className="truncate text-xs text-muted-foreground">{host2 || '—'}</p>
+                </div>
+              </div>
             </div>
 
-            <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep('credentials')}>Back</Button>
-              <Button onClick={() => setStep('review')}>Next</Button>
+            <div className="flex flex-wrap gap-1.5">
+              {dryRun && <Badge tone="warning">Dry run — nothing is written</Badge>}
+              {automap && <Badge tone="neutral">automap</Badge>}
+              {usecache && <Badge tone="neutral">usecache</Badge>}
+              {!ssl1 && <Badge tone="warning">Source without TLS</Badge>}
+              {!ssl2 && <Badge tone="warning">Destination without TLS</Badge>}
+              <Badge tone="neutral">
+                {foldersText.trim()
+                  ? `${foldersText.split('\n').filter((f) => f.trim()).length} folder(s)`
+                  : 'All folders'}
+              </Badge>
             </div>
-          </CardContent>
-        </Card>
-      )}
 
-      {step === 'review' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 3: Review & Start</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="bg-muted rounded-md p-4 text-sm space-y-1">
-              {selectedProfile ? (
-                <p><strong>Profile:</strong> {profiles.find((p) => p.id === selectedProfile)?.name}</p>
+            {!dryRun && (
+              <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+                This writes messages into the destination mailbox. Run a dry run first if you are
+                not certain.
+              </p>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <Button
+            variant="outline"
+            onClick={() => setStep(STEPS[Math.max(0, stepIndex - 1)].key)}
+            disabled={stepIndex === 0}
+          >
+            Back
+          </Button>
+
+          {step === 'review' ? (
+            <Button onClick={start} disabled={loading}>
+              {loading ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
               ) : (
-                <>
-                  <p><strong>Source:</strong> {user1}@{host1} {ssl1 ? '(SSL)' : ''}</p>
-                  <p><strong>Destination:</strong> {user2}@{host2} {ssl2 ? '(SSL)' : ''}</p>
-                </>
+                <PlayCircle className="mr-1.5 h-4 w-4" />
               )}
-              <p><strong>Automap:</strong> {automap ? 'Yes' : 'No'} | <strong>Cache:</strong> {usecache ? 'Yes' : 'No'} | <strong>Dry run:</strong> {dryRun ? 'Yes' : 'No'}</p>
-              {foldersText && <p><strong>Folders:</strong> {foldersText.split('\n').filter(Boolean).join(', ')}</p>}
-            </div>
-
-            {error && <div className="text-sm text-destructive">{error}</div>}
-
-            <div className="flex justify-between">
-              <Button variant="outline" onClick={() => setStep('options')}>Back</Button>
-              <Button onClick={handleStart} disabled={loading}>
-                {loading ? 'Starting...' : 'Start Sync'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              {loading ? 'Starting…' : dryRun ? 'Run dry run' : 'Start sync'}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => setStep(STEPS[stepIndex + 1].key)}
+              disabled={step === 'credentials' && !credentialsReady}
+            >
+              Continue
+              <ArrowRight className="ml-1.5 h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
