@@ -417,8 +417,8 @@ async def _cmd_stop(user_id: int, job_id: int) -> str:
 
 async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> str:
     """Sync one mailbox from credentials typed straight into the chat."""
-    from .batch_runner import create_batch, describe_batch
-    from .run_command import USAGE, RunSyntaxError, describe, is_labeled, parse_flat, parse_labeled
+    from .batch_runner import create_batch_rows, describe_batch
+    from .run_command import USAGE, RunSyntaxError, describe, parse_run
 
     if not body.strip():
         return USAGE
@@ -428,21 +428,25 @@ async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> st
     # opposite of the point.
     await _delete_message(chat_id, message_id)
 
-    labeled = is_labeled(body)
     try:
-        specs = [parse_labeled(body)] if labeled else parse_flat(body)
+        specs = parse_run(body)
     except RunSyntaxError as exc:
         return str(exc)
-
-    if not specs:
-        return "I could not parse that.\n\n" + USAGE
 
     # Several flat lines are a list of mailboxes, not a one-off: make a batch
     # and make the user confirm it.
     if len(specs) > 1:
+        rows = [
+            {
+                "host1": s.host1, "user1": s.user1, "password1": s.password1,
+                "host2": s.host2, "user2": s.user2, "password2": s.password2,
+                "extra_options": s.extra_options,
+            }
+            for s in specs
+        ]
         db = SessionLocal()
         try:
-            batch = create_batch(db, user_id, body, "telegram-run.csv")
+            batch = create_batch_rows(db, user_id, rows, "telegram-run")
             preview = describe_batch(batch)
             batch_id = batch.id
         except ValueError as exc:

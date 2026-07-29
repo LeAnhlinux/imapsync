@@ -35,6 +35,23 @@ def create_batch(
     rows = parse_csv(text)
     if not rows:
         raise ValueError("No valid rows found in CSV data")
+    return create_batch_rows(db, user_id, rows, filename, options)
+
+
+def create_batch_rows(
+    db: Session,
+    user_id: int,
+    rows: list[dict],
+    filename: str,
+    options: dict | None = None,
+) -> BatchRun:
+    """Build a pending BatchRun from rows someone else already parsed.
+
+    The Telegram /run command does its own parsing, so it arrives here with
+    rows rather than CSV text.
+    """
+    if not rows:
+        raise ValueError("No mailboxes to run")
 
     # Tell the user which options were thrown out instead of dropping them
     # silently further down in the runner.

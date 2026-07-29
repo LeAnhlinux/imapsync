@@ -1,23 +1,20 @@
 """Parse the /run command's mailbox specification.
 
 Six semicolon-separated fields in a row read fine to a machine and badly to a
-person: nothing in `a;b;c;d;e;f` says which half is the source and which is the
-destination, and getting that backwards copies the wrong way. So the documented
-form labels the two sides:
+person: nothing in `a;b;c;d;e;f` says where the source ends and the destination
+begins, and getting that backwards copies the wrong way. A space splits the two
+sides, semicolons split the fields inside one side:
 
-    /run
-    from: mail.old.com;me@old.com;password
-    to:   mail.new.com;me@new.com;password
-    options: --dry --maxage 30
+    /run mail.old.com;me@old.com;password mail.new.com;me@new.com;password
 
-The flat positional form is still accepted, because it is what the CSV batch
-importer uses and pasting one line out of a CSV should work.
+Options go at the end, and a password containing a space needs the labelled
+form below instead, since there is nothing else to split on.
 """
 
 import re
 from dataclasses import dataclass, field
 
-from .csv_parser import _parse_extra_options, parse_csv
+from .csv_parser import _parse_extra_options
 
 # Aliases so nobody has to remember which word we picked, including the
 # Vietnamese ones this is most often typed in.
@@ -26,22 +23,25 @@ _TO_LABELS = {"to", "dest", "destination", "target", "new", "moi", "mới", "dic
 _OPTION_LABELS = {"options", "option", "opts", "flags", "tuychon"}
 
 # A label is a bare word before a colon. Requiring "no dots" keeps host:port
-# and bare hostnames in the flat form from looking like labels.
+# and bare hostnames from looking like labels.
 _LABEL_LINE = re.compile(r"^\s*([^\s:;.]+)\s*:")
 
 USAGE = """Usage:
 
+/run mail.old.com;me@old.com;password mail.new.com;me@new.com;password
+
+A space separates the two mailboxes; each one is host;user;password.
+The left one is copied to the right one.
+
+Options go at the end:
+/run old.com;me;pw new.com;me;pw --dry --maxage 30 --nossl2
+
+Paste one such line per mailbox to queue several as a batch.
+
+If a password contains a space, use the long form instead:
 /run
-from: mail.old.com;me@old.com;password
-to: mail.new.com;me@new.com;password
-
-Each side is host;user;password — 'from' is the mailbox being copied,
-'to' is where it lands.
-
-Optional third line:
-options: --dry --maxage 30 --nossl2
-
-(The flat form host1;user1;pass1;host2;user2;pass2 also works.)"""
+from: mail.old.com;me@old.com;my password
+to: mail.new.com;me@new.com;password"""
 
 
 @dataclass
@@ -59,21 +59,22 @@ class RunSyntaxError(ValueError):
     """Raised with a message meant to be shown to the user verbatim."""
 
 
-def _split_side(label: str, value: str) -> tuple[str, str, str]:
+def _split_side(what: str, value: str) -> tuple[str, str, str]:
     parts = [p.strip() for p in value.split(";")]
     if len(parts) != 3 or not all(parts):
         raise RunSyntaxError(
-            f"The '{label}' line needs exactly host;user;password — got {len(parts)} field(s).\n\n{USAGE}"
+            f"The {what} mailbox needs exactly host;user;password — "
+            f"got {len(parts)} field(s) in '{value}'.\n\n{USAGE}"
         )
     return parts[0], parts[1], parts[2]
 
 
 def is_labeled(text: str) -> bool:
-    """True when the message uses the labelled form rather than the flat one.
+    """True when the message uses the from:/to: form rather than the short one.
 
     Any bare word before a colon counts, not just the ones we know: a typo like
-    "fromm:" should get "Unknown label" rather than falling through to the flat
-    parser and failing as if the whole thing were unreadable.
+    "fromm:" should get "Unknown label" rather than falling through to the
+    positional parser and failing as if the whole thing were unreadable.
     """
     return any(_LABEL_LINE.match(line) for line in text.splitlines() if line.strip())
 
@@ -96,9 +97,9 @@ def parse_labeled(text: str) -> RunSpec:
         value = line[match.end():].strip()
 
         if key in _FROM_LABELS:
-            source = _split_side(key, value)
+            source = _split_side("'from'", value)
         elif key in _TO_LABELS:
-            dest = _split_side(key, value)
+            dest = _split_side("'to'", value)
         elif key in _OPTION_LABELS:
             options = _parse_extra_options(value)
         else:
@@ -118,17 +119,59 @@ def parse_labeled(text: str) -> RunSpec:
     )
 
 
-def parse_flat(text: str) -> list[RunSpec]:
-    """The positional host1;user1;pass1;host2;user2;pass2 form, one per line."""
-    rows = parse_csv(text)
-    return [
-        RunSpec(
-            host1=r["host1"], user1=r["user1"], password1=r["password1"],
-            host2=r["host2"], user2=r["user2"], password2=r["password2"],
-            extra_options=r.get("extra_options") or {},
+def parse_line(line: str) -> RunSpec:
+    """One mailbox pair: `host;user;pw host;user;pw [--options]`."""
+    tokens = line.split()
+    if not tokens:
+        raise RunSyntaxError(USAGE)
+
+    # Options run from the first --flag to the end of the line, so a flag that
+    # takes a value ("--maxage 30") keeps its value.
+    opt_start = next((i for i, t in enumerate(tokens) if t.startswith("--")), len(tokens))
+    sides = tokens[:opt_start]
+    options = _parse_extra_options(" ".join(tokens[opt_start:]))
+
+    if len(sides) == 2:
+        host1, user1, password1 = _split_side("source", sides[0])
+        host2, user2, password2 = _split_side("destination", sides[1])
+    elif len(sides) == 1:
+        # The flat CSV row, so a line copied out of a batch file still works.
+        fields = [f.strip() for f in sides[0].split(";")]
+        if len(fields) < 6 or not all(fields[:6]):
+            raise RunSyntaxError(
+                "I need two mailboxes separated by a space.\n\n" + USAGE
+            )
+        host1, user1, password1, host2, user2, password2 = fields[:6]
+        if len(fields) > 6 and fields[6]:
+            options = {**_parse_extra_options(fields[6]), **options}
+    else:
+        raise RunSyntaxError(
+            f"I found {len(sides)} mailboxes on that line, I need exactly 2. "
+            "A password with a space in it needs the long form.\n\n" + USAGE
         )
-        for r in rows
-    ]
+
+    return RunSpec(
+        host1=host1, user1=user1, password1=password1,
+        host2=host2, user2=user2, password2=password2,
+        extra_options=options,
+    )
+
+
+def parse_run(text: str) -> list[RunSpec]:
+    """Parse a whole /run body: labelled block, or one mailbox pair per line."""
+    if is_labeled(text):
+        return [parse_labeled(text)]
+
+    specs = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        specs.append(parse_line(line))
+
+    if not specs:
+        raise RunSyntaxError(USAGE)
+    return specs
 
 
 def describe(spec: RunSpec, dry_run: bool = False) -> str:
