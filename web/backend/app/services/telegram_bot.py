@@ -24,6 +24,7 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import BatchRun, Profile, SyncJob, TelegramSettings, User, now_vn
 from ..security import decrypt_password, encrypt_password
+from .imapsync_options import sanitize_extra_options
 
 log = logging.getLogger("telegram")
 
@@ -34,7 +35,8 @@ _MAX_CSV_BYTES = 1_000_000
 HELP = """imapsync bot
 
 /profiles - list sync profiles
-/sync <profile_id> - start a sync
+/sync <profile_id> - start a sync from a profile
+/run <host1;user1;pass1;host2;user2;pass2> - sync one mailbox right now
 /batch - send a .csv file with this as the caption
 /batchgo <batch_id> - run a batch you uploaded
 /jobs - jobs running right now
@@ -413,6 +415,89 @@ async def _cmd_stop(user_id: int, job_id: int) -> str:
     return f"Job #{job_id} aborted."
 
 
+RUN_USAGE = (
+    "Usage: /run host1;user1;password1;host2;user2;password2[;options]\n\n"
+    "Example:\n"
+    "/run mail.old.com;me@old.com;pw1;mail.new.com;me@new.com;pw2\n\n"
+    "The options field is optional, e.g. ;--dry or ;--maxage 30\n"
+    "Use --nossl1 / --nossl2 there for servers without TLS.\n"
+    "Paste several lines to queue them as a batch instead."
+)
+
+
+async def _cmd_run(user_id: int, body: str, chat_id: int, message_id: int) -> str:
+    """Sync one mailbox from credentials typed straight into the chat."""
+    from .batch_runner import create_batch, describe_batch
+    from .csv_parser import parse_csv
+    from .sync_starter import start_adhoc_sync
+
+    if not body.strip():
+        return RUN_USAGE
+
+    rows = parse_csv(body)
+    if not rows:
+        return "I could not parse that.\n\n" + RUN_USAGE
+
+    # The message contains mailbox passwords in cleartext. Get it out of the
+    # chat before doing anything slow.
+    await _delete_message(chat_id, message_id)
+
+    if len(rows) > 1:
+        db = SessionLocal()
+        try:
+            batch = create_batch(db, user_id, body, "telegram-run.csv")
+            preview = describe_batch(batch)
+            batch_id = batch.id
+        except ValueError as exc:
+            return str(exc)
+        finally:
+            db.close()
+        return (
+            f"That was {len(rows)} mailboxes, so I made a batch instead.\n\n"
+            f"{preview}\n\n"
+            f"{_CREDENTIAL_WARNING}\n"
+            f"Run it with: /batchgo {batch_id}"
+        )
+
+    row = rows[0]
+    extra = dict(row.get("extra_options") or {})
+    # ssl1/ssl2 are managed by the runner and blocked from extra_options, so
+    # accept them here as their own thing.
+    ssl1 = not extra.pop("nossl1", False)
+    ssl2 = not extra.pop("nossl2", False)
+    dry_run = bool(extra.pop("dry", False))
+
+    _, rejected = sanitize_extra_options(extra)
+    if rejected:
+        return f"Unsupported or unsafe imapsync options: {', '.join(sorted(rejected))}"
+
+    try:
+        job_id = await start_adhoc_sync(
+            user_id,
+            host1=row["host1"], user1=row["user1"], password1=row["password1"],
+            host2=row["host2"], user2=row["user2"], password2=row["password2"],
+            ssl1=ssl1, ssl2=ssl2,
+            extra_options=extra,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        log.exception("Telegram /run failed")
+        return f"Could not start the sync: {exc}"
+
+    mode = " (dry run)" if dry_run else ""
+    return (
+        f"Started job #{job_id}{mode}\n"
+        f"{row['user1']} on {row['host1']} -> {row['user2']} on {row['host2']}\n\n"
+        f"{_CREDENTIAL_WARNING}\n"
+        f"Follow it with: /status {job_id}"
+    )
+
+
+_CREDENTIAL_WARNING = (
+    "I deleted your message from this chat, but Telegram still has a copy on their servers."
+)
+
+
 async def _cmd_batch_upload(user_id: int, document: dict, chat_id: int, message_id: int) -> str:
     """Ingest a CSV sent as a Telegram document."""
     from .batch_runner import create_batch, describe_batch
@@ -444,7 +529,7 @@ async def _cmd_batch_upload(user_id: int, document: dict, chat_id: int, message_
 
     return (
         f"{preview}\n\n"
-        f"I deleted your upload from this chat, but Telegram still has a copy on their servers.\n"
+        f"{_CREDENTIAL_WARNING}\n"
         f"Run it with: /batchgo {batch_id}"
     )
 
@@ -518,6 +603,10 @@ async def _dispatch(message: dict) -> str:
         if profile_id is None:
             return "Usage: /sync <profile_id>   (see /profiles)"
         return await _cmd_sync(user_id, profile_id)
+    if command == "/run":
+        # Everything after the command, newlines included, is CSV.
+        body = text[len(parts[0]):].strip()
+        return await _cmd_run(user_id, body, chat_id, message["message_id"])
     if command == "/status":
         job_id = _int_arg()
         if job_id is None:

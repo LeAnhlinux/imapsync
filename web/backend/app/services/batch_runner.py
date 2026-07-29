@@ -11,6 +11,7 @@ from ..database import SessionLocal
 from ..models import BatchRun, SyncJob, now_vn
 from ..security import decrypt_password, encrypt_password
 from .csv_parser import parse_csv
+from .imapsync_options import sanitize_extra_options
 from .imapsync_runner import start_sync
 from .job_completion import finalize_job
 
@@ -34,6 +35,15 @@ def create_batch(
     rows = parse_csv(text)
     if not rows:
         raise ValueError("No valid rows found in CSV data")
+
+    # Tell the user which options were thrown out instead of dropping them
+    # silently further down in the runner.
+    for line_no, row in enumerate(rows, 1):
+        _, rejected = sanitize_extra_options(row.get("extra_options"))
+        if rejected:
+            raise ValueError(
+                f"Row {line_no}: unsupported or unsafe imapsync options: {', '.join(sorted(rejected))}"
+            )
 
     # batch_data lands in the database, so the IMAP passwords get the same
     # Fernet treatment as the ones stored on a Profile.

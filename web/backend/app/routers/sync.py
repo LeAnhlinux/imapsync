@@ -4,78 +4,37 @@ from ..models import now_vn
 from sqlalchemy.orm import Session
 
 from ..deps import get_current_user, get_db
-from ..models import Profile, SyncJob, User
+from ..models import SyncJob, User
 from ..schemas import SyncJobOut, SyncStart
-from ..security import decrypt_password
-from ..services.imapsync_runner import abort_job, get_job_log, start_sync
-from ..services.job_completion import finalize_job
+from ..services.imapsync_runner import abort_job, get_job_log
+from ..services.sync_starter import start_adhoc_sync, start_profile_sync
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
 @router.post("/start", response_model=SyncJobOut)
 async def start(data: SyncStart, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # Resolve credentials from profile or direct params
     if data.profile_id:
-        profile = db.query(Profile).filter(Profile.id == data.profile_id, Profile.user_id == user.id).first()
-        if not profile:
+        try:
+            job_id = await start_profile_sync(
+                user.id, data.profile_id,
+                folders=data.folders, dry_run=data.dry_run,
+            )
+        except LookupError:
             raise HTTPException(status_code=404, detail="Profile not found")
-        host1 = profile.host1
-        user1 = profile.user1
-        password1 = decrypt_password(profile.password1_enc)
-        ssl1 = profile.ssl1
-        host2 = profile.host2
-        user2 = profile.user2
-        password2 = decrypt_password(profile.password2_enc)
-        ssl2 = profile.ssl2
-        extra_options = profile.extra_options or {}
     else:
         if not all([data.host1, data.user1, data.password1, data.host2, data.user2, data.password2]):
             raise HTTPException(status_code=400, detail="Provide profile_id or all connection params")
-        host1 = data.host1
-        user1 = data.user1
-        password1 = data.password1
-        ssl1 = data.ssl1
-        host2 = data.host2
-        user2 = data.user2
-        password2 = data.password2
-        ssl2 = data.ssl2
-        extra_options = data.extra_options
+        job_id = await start_adhoc_sync(
+            user.id,
+            host1=data.host1, user1=data.user1, password1=data.password1,
+            host2=data.host2, user2=data.user2, password2=data.password2,
+            ssl1=data.ssl1, ssl2=data.ssl2,
+            extra_options=data.extra_options,
+            folders=data.folders, dry_run=data.dry_run,
+        )
 
-    # Create DB record
-    job = SyncJob(
-        user_id=user.id,
-        profile_id=data.profile_id,
-        source_account=f"{user1}@{host1}",
-        dest_account=f"{user2}@{host2}",
-        status="running",
-        started_at=now_vn(),
-        logfile=f"{None}",  # Will be set after start
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    job.logfile = str(f"data/logs/{job.id}.txt")
-    db.commit()
-
-    # Start the subprocess
-    running_job = await start_sync(
-        job_id=job.id,
-        host1=host1, user1=user1, password1=password1,
-        host2=host2, user2=user2, password2=password2,
-        ssl1=ssl1, ssl2=ssl2,
-        folders=data.folders or None,
-        extra_options=extra_options,
-        dry_run=data.dry_run,
-        on_complete=finalize_job,
-    )
-
-    job.pid = running_job.process.pid
-    db.commit()
-    db.refresh(job)
-
-    return job
+    return db.query(SyncJob).filter(SyncJob.id == job_id).first()
 
 
 @router.get("/running", response_model=list[SyncJobOut])
