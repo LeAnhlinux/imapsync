@@ -36,6 +36,8 @@ export function NewSyncPage() {
 
   // Options
   const [dryRun, setDryRun] = useState(false)
+  const [automap, setAutomap] = useState(true)
+  const [usecache, setUsecache] = useState(true)
   const [foldersText, setFoldersText] = useState('')
 
   useEffect(() => {
@@ -58,9 +60,12 @@ export function NewSyncPage() {
     setError('')
     try {
       const folders = foldersText.split('\n').map((f) => f.trim()).filter(Boolean)
+      const extra_options: Record<string, boolean> = {}
+      if (automap) extra_options.automap = true
+      if (usecache) extra_options.usecache = true
       const data = selectedProfile
-        ? { profile_id: selectedProfile, dry_run: dryRun, folders }
-        : { host1, user1, password1, ssl1, host2, user2, password2, ssl2, dry_run: dryRun, folders }
+        ? { profile_id: selectedProfile, dry_run: dryRun, folders, extra_options }
+        : { host1, user1, password1, ssl1, host2, user2, password2, ssl2, dry_run: dryRun, folders, extra_options }
       const res = await syncApi.start(data)
       navigate(`/jobs?highlight=${res.data.id}`)
     } catch (err: unknown) {
@@ -153,10 +158,23 @@ export function NewSyncPage() {
             <CardTitle>Step 2: Options</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
-              Dry run (simulate only, no changes)
-            </label>
+            <div className="flex flex-wrap gap-x-6 gap-y-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={automap} onChange={(e) => setAutomap(e.target.checked)} className="w-4 h-4" />
+                <span className="font-medium">Automap</span>
+                <span className="text-xs text-muted-foreground">(auto map Sent/Drafts/Junk)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={usecache} onChange={(e) => setUsecache(e.target.checked)} className="w-4 h-4" />
+                <span className="font-medium">Use Cache</span>
+                <span className="text-xs text-muted-foreground">(faster re-syncs)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="w-4 h-4" />
+                <span className="font-medium">Dry Run</span>
+                <span className="text-xs text-muted-foreground">(simulate only)</span>
+              </label>
+            </div>
 
             <div>
               <label className="text-sm font-medium">Specific folders (one per line, leave empty for all)</label>
@@ -191,7 +209,7 @@ export function NewSyncPage() {
                   <p><strong>Destination:</strong> {user2}@{host2} {ssl2 ? '(SSL)' : ''}</p>
                 </>
               )}
-              <p><strong>Dry run:</strong> {dryRun ? 'Yes' : 'No'}</p>
+              <p><strong>Automap:</strong> {automap ? 'Yes' : 'No'} | <strong>Cache:</strong> {usecache ? 'Yes' : 'No'} | <strong>Dry run:</strong> {dryRun ? 'Yes' : 'No'}</p>
               {foldersText && <p><strong>Folders:</strong> {foldersText.split('\n').filter(Boolean).join(', ')}</p>}
             </div>
 

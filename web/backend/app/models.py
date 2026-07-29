@@ -1,4 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+TZ_VN = timezone(timedelta(hours=7))
+
+
+def now_vn():
+    return datetime.now(TZ_VN).replace(tzinfo=None)
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import relationship
@@ -14,7 +20,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_vn)
 
     profiles = relationship("Profile", back_populates="user", cascade="all, delete-orphan")
     sync_jobs = relationship("SyncJob", back_populates="user", cascade="all, delete-orphan")
@@ -38,8 +44,8 @@ class Profile(Base):
     password2_enc = Column(Text, nullable=False)
     ssl2 = Column(Boolean, default=True)
     extra_options = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=now_vn)
+    updated_at = Column(DateTime, default=now_vn, onupdate=now_vn)
 
     user = relationship("User", back_populates="profiles")
     sync_jobs = relationship("SyncJob", back_populates="profile")
@@ -52,6 +58,8 @@ class SyncJob(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=True)
+    source_account = Column(String(255), nullable=True)  # user1@host1
+    dest_account = Column(String(255), nullable=True)    # user2@host2
     status = Column(String(20), default="pending", index=True)  # pending/running/completed/failed/aborted
     pid = Column(Integer, nullable=True)
     logfile = Column(String(500), nullable=True)
@@ -79,7 +87,7 @@ class Schedule(Base):
     is_active = Column(Boolean, default=True)
     last_run_at = Column(DateTime, nullable=True)
     next_run_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_vn)
 
     user = relationship("User", back_populates="schedules")
     profile = relationship("Profile", back_populates="schedules")
@@ -95,7 +103,8 @@ class BatchRun(Base):
     completed_rows = Column(Integer, default=0)
     failed_rows = Column(Integer, default=0)
     status = Column(String(20), default="pending")  # pending/running/completed/failed
-    created_at = Column(DateTime, default=datetime.utcnow)
+    batch_data = Column(JSON, nullable=True)  # stores parsed rows + options
+    created_at = Column(DateTime, default=now_vn)
 
     user = relationship("User", back_populates="batch_runs")
 

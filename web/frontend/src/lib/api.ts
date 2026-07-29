@@ -72,11 +72,13 @@ export const folderApi = {
 
 // Batch
 export const batchApi = {
-  upload: (file: File) => {
+  upload: (file: File, dryRun = false, ssl1 = true, ssl2 = true, automap = true, usecache = true) => {
     const form = new FormData()
     form.append('file', file)
-    return api.post('/batch/upload', form)
+    return api.post(`/batch/upload?dry_run=${dryRun}&ssl1=${ssl1}&ssl2=${ssl2}&automap=${automap}&usecache=${usecache}`, form)
   },
+  uploadText: (text: string, dryRun = false, ssl1 = true, ssl2 = true, automap = true, usecache = true) =>
+    api.post(`/batch/upload-text?dry_run=${dryRun}&ssl1=${ssl1}&ssl2=${ssl2}&automap=${automap}&usecache=${usecache}`, { csv_text: text }),
   start: (id: number) => api.post(`/batch/${id}/start`),
   get: (id: number) => api.get(`/batch/${id}`),
 }

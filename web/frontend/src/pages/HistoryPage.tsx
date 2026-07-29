@@ -6,6 +6,8 @@ import { Card, CardContent } from '@/components/ui/card'
 interface Job {
   id: number
   status: string
+  source_account: string | null
+  dest_account: string | null
   started_at: string | null
   finished_at: string | null
   messages_transferred: number
@@ -35,6 +37,15 @@ export function HistoryPage() {
     const sizes = ['B', 'KB', 'MB', 'GB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
+  }
+
+  const formatDuration = (start: string, end: string) => {
+    const sec = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000)
+    if (sec < 60) return `${sec}s`
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`
+    const h = Math.floor(sec / 3600)
+    const m = Math.floor((sec % 3600) / 60)
+    return `${h}h ${m}m`
   }
 
   const viewLog = async (jobId: number) => {
@@ -71,19 +82,24 @@ export function HistoryPage() {
         <p className="text-muted-foreground">No sync history yet.</p>
       ) : (
         <div className="space-y-2">
-          <div className="grid grid-cols-7 gap-2 px-4 text-sm font-medium text-muted-foreground">
-            <span>ID</span><span>Status</span><span>Started</span><span>Duration</span>
+          <div className="grid grid-cols-9 gap-2 px-4 text-sm font-medium text-muted-foreground">
+            <span>ID</span><span>Status</span><span className="col-span-2">Source → Dest</span><span>Started</span><span>Duration</span>
             <span>Messages</span><span>Data</span><span>Actions</span>
           </div>
           {jobs.map((j) => (
             <Card key={j.id}>
-              <CardContent className="p-4 grid grid-cols-7 gap-2 items-center text-sm">
+              <CardContent className="p-4 grid grid-cols-9 gap-2 items-center text-sm">
                 <span>#{j.id}</span>
                 <span className={`font-medium ${statusColor(j.status)}`}>{j.status}</span>
-                <span>{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</span>
+                <span className="col-span-2 truncate text-xs" title={`${j.source_account || '-'} → ${j.dest_account || '-'}`}>
+                  <span className="font-medium">{j.source_account || '-'}</span>
+                  <span className="text-muted-foreground mx-1">→</span>
+                  <span className="font-medium">{j.dest_account || '-'}</span>
+                </span>
+                <span className="text-xs">{j.started_at ? new Date(j.started_at).toLocaleString() : '-'}</span>
                 <span>
                   {j.started_at && j.finished_at
-                    ? `${Math.round((new Date(j.finished_at).getTime() - new Date(j.started_at).getTime()) / 1000)}s`
+                    ? formatDuration(j.started_at, j.finished_at)
                     : '-'}
                 </span>
                 <span>{j.messages_transferred}</span>

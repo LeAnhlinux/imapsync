@@ -84,10 +84,26 @@ export function RunningJobsPage() {
 function LogViewer({ jobId }: { jobId: number }) {
   const { logs, progress, jobStatus } = useJobWebSocket(jobId)
   const logEndRef = useRef<HTMLDivElement>(null)
+  const [fallbackLogs, setFallbackLogs] = useState<string[]>([])
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  }, [logs, fallbackLogs])
+
+  // Fallback: fetch log via REST if WebSocket has no logs after 3s
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (logs.length === 0) {
+        syncApi.log(jobId).then((r) => {
+          const logText = r.data?.log || ''
+          if (logText) setFallbackLogs(logText.split('\n'))
+        }).catch(() => {})
+      }
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [jobId, logs.length])
+
+  const displayLogs = logs.length > 0 ? logs : fallbackLogs
 
   return (
     <div className="mt-4 space-y-3">
@@ -115,10 +131,10 @@ function LogViewer({ jobId }: { jobId: number }) {
 
       {/* Log output */}
       <div className="bg-muted rounded-md p-3 max-h-96 overflow-y-auto font-mono text-xs">
-        {logs.length === 0 ? (
+        {displayLogs.length === 0 ? (
           <p className="text-muted-foreground">Waiting for output...</p>
         ) : (
-          logs.map((line, i) => (
+          displayLogs.map((line, i) => (
             <div key={i} className="whitespace-pre-wrap">{line}</div>
           ))
         )}

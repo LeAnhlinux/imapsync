@@ -96,6 +96,8 @@ class SyncJobOut(BaseModel):
     id: int
     user_id: int
     profile_id: int | None
+    source_account: str | None = None
+    dest_account: str | None = None
     status: str
     pid: int | None
     started_at: datetime | None

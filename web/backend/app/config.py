@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
 
@@ -14,9 +13,14 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     ALGORITHM: str = "HS256"
 
-    # Data directories
+    # Data directories (resolved to absolute paths)
     DATA_DIR: Path = Path("./data")
     LOG_DIR: Path = Path("./data/logs")
+
+    def model_post_init(self, __context):
+        # Ensure paths are absolute
+        object.__setattr__(self, 'DATA_DIR', self.DATA_DIR.resolve())
+        object.__setattr__(self, 'LOG_DIR', self.LOG_DIR.resolve())
 
     class Config:
         env_file = ".env"
