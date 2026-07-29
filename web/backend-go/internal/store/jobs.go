@@ -117,7 +117,9 @@ type HistoryFilter struct {
 	PerPage int
 }
 
-func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
+// historyWhere builds the filter shared by the list and its count, so the
+// X-Total-Count header describes the query the caller actually made.
+func historyWhere(f HistoryFilter) (string, []any) {
 	where := []string{"user_id=?"}
 	args := []any{f.UserID}
 	if f.Status != "" {
@@ -129,6 +131,11 @@ func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
 		like := "%" + f.Query + "%"
 		args = append(args, like, like, like)
 	}
+	return strings.Join(where, " AND "), args
+}
+
+func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
+	where, args := historyWhere(f)
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -137,14 +144,15 @@ func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
 	}
 	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
 
-	q := `SELECT ` + jobCols + ` FROM sync_jobs WHERE ` + strings.Join(where, " AND ") +
-		` ORDER BY id DESC LIMIT ? OFFSET ?`
-	return db.queryJobs(q, args...)
+	return db.queryJobs(`SELECT `+jobCols+` FROM sync_jobs WHERE `+where+
+		` ORDER BY id DESC LIMIT ? OFFSET ?`, args...)
 }
 
+// HistoryCount counts the same rows History would return, ignoring paging.
 func (db *DB) HistoryCount(f HistoryFilter) (int, error) {
+	where, args := historyWhere(f)
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM sync_jobs WHERE user_id=?`, f.UserID).Scan(&n)
+	err := db.QueryRow(`SELECT COUNT(*) FROM sync_jobs WHERE `+where, args...).Scan(&n)
 	return n, err
 }
 

@@ -180,20 +180,23 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- history
 
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.DB.History(store.HistoryFilter{
+	filter := store.HistoryFilter{
 		UserID:  userFrom(r).ID,
 		Status:  r.URL.Query().Get("status"),
 		Query:   r.URL.Query().Get("q"),
 		Page:    queryInt(r, "page", 1),
 		PerPage: queryInt(r, "per_page", 20),
-	})
+	}
+	jobs, err := s.DB.History(filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	// Total count as a header: the list body stays the array the frontend
-	// already expects, but pagination now has something to work with.
-	if total, err := s.DB.HistoryCount(store.HistoryFilter{UserID: userFrom(r).ID}); err == nil {
+	// already expects, but pagination now has something to work with. It uses
+	// the same filter as the list, or the count would describe a different
+	// query than the one that was asked.
+	if total, err := s.DB.HistoryCount(filter); err == nil {
 		w.Header().Set("X-Total-Count", itoa(total))
 	}
 	writeJSON(w, http.StatusOK, jobs)
