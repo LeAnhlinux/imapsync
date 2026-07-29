@@ -238,6 +238,8 @@ fi
 
 # Copy backend code
 cp -r "$SCRIPT_DIR/backend/" "$INSTALL_DIR/backend/"
+mkdir -p "$INSTALL_DIR/scripts"
+cp "$SCRIPT_DIR/scripts/create_admin.py" "$INSTALL_DIR/scripts/"
 echo "  Backend code deployed."
 
 # Create system user
@@ -304,8 +306,23 @@ echo "    journalctl -u imapsync-web -f     # View backend logs"
 echo "    nginx -t && systemctl reload nginx # Reload nginx"
 echo "    certbot renew                      # Renew SSL cert"
 echo ""
-echo "  Open https://$DOMAIN and register the first user."
-echo "  (First user becomes admin automatically)"
-echo ""
 echo "  imapsync version: $(imapsync --version 2>&1 | head -1 || echo 'check manually')"
+echo ""
+
+#############################################################
+# Admin account — self-registration is disabled in the API,
+# so the first account has to be created here.
+#############################################################
+echo "=========================================="
+echo "  Creating the admin account"
+echo "=========================================="
+if "$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/scripts/create_admin.py"; then
+    chown -R imapsync:imapsync "$INSTALL_DIR/data"
+    echo ""
+    echo "  Done. Open https://$DOMAIN and log in."
+else
+    echo ""
+    echo "  Admin account not created. Run it later with:"
+    echo "    cd $INSTALL_DIR && venv/bin/python3 scripts/create_admin.py"
+fi
 echo ""

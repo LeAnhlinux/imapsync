@@ -202,6 +202,8 @@ python3 -m venv "\$INSTALL_DIR/venv"
 
 # Copy backend code
 cp -r /tmp/imapsync-web/backend/ "\$INSTALL_DIR/backend/"
+mkdir -p "\$INSTALL_DIR/scripts"
+cp /tmp/imapsync-web/scripts/create_admin.py "\$INSTALL_DIR/scripts/"
 
 echo "DONE_STEP5"
 REMOTE_SCRIPT
@@ -285,7 +287,7 @@ Type=simple
 User=imapsync
 WorkingDirectory=\$INSTALL_DIR
 EnvironmentFile=\$INSTALL_DIR/.env
-ExecStart=\$INSTALL_DIR/venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 2
+ExecStart=\$INSTALL_DIR/venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 
@@ -368,8 +370,11 @@ echo "    journalctl -u imapsync-web -f     # View logs"
 echo "    nginx -t && systemctl reload nginx"
 echo "    certbot renew                     # Renew SSL"
 echo ""
-echo "  Open https://$DOMAIN and register the first user."
-echo "  (First user becomes admin automatically)"
+echo "  Next: create the admin account (self-registration is disabled)."
+echo "    ssh -p $SSH_PORT $SSH_USER@$SERVER_IP"
+echo "    cd $INSTALL_DIR && venv/bin/python3 scripts/create_admin.py"
+echo ""
+echo "  Then open https://$DOMAIN and log in."
 echo ""
 
 # Cleanup
