@@ -11,3 +11,4 @@ aiosmtplib==3.0.2
 apscheduler==3.10.4
 websockets==14.1
 aiofiles==24.1.0
+httpx==0.28.1

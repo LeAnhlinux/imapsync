@@ -17,6 +17,30 @@ class Settings(BaseSettings):
     DATA_DIR: Path = Path("./data")
     LOG_DIR: Path = Path("./data/logs")
 
+    # Telegram bot (disabled unless all three are set)
+    TELEGRAM_BOT_TOKEN: str = ""
+    # Comma-separated chat ids allowed to talk to the bot. Everything else is
+    # ignored: the bot can start syncs and read logs, so this is the only gate.
+    TELEGRAM_ALLOWED_CHAT_IDS: str = ""
+    # Username of the account the bot acts as — jobs and profiles belong to it.
+    TELEGRAM_USERNAME: str = ""
+
+    @property
+    def telegram_chat_ids(self) -> set[int]:
+        ids = set()
+        for part in self.TELEGRAM_ALLOWED_CHAT_IDS.split(","):
+            part = part.strip()
+            if part:
+                try:
+                    ids.add(int(part))
+                except ValueError:
+                    continue
+        return ids
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.TELEGRAM_BOT_TOKEN and self.TELEGRAM_USERNAME and self.telegram_chat_ids)
+
     def model_post_init(self, __context):
         # Ensure paths are absolute
         object.__setattr__(self, 'DATA_DIR', self.DATA_DIR.resolve())

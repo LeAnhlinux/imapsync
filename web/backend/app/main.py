@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -5,10 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .config import settings
 from .database import init_db
 from .routers import auth, profiles, sync, history, schedules, folders, batch, notifications, ws
 from .services.job_completion import reconcile_orphan_jobs
 from .services.scheduler import init_scheduler, scheduler
+from .services.telegram_bot import run_bot
 
 
 @asynccontextmanager
@@ -19,8 +22,19 @@ async def lifespan(app: FastAPI):
     if interrupted:
         print(f"Marked {interrupted} job(s) left running by a previous shutdown as interrupted")
     init_scheduler()
+
+    telegram_task = None
+    if settings.telegram_enabled:
+        telegram_task = asyncio.create_task(run_bot())
+        print("Telegram bot enabled")
+    elif settings.TELEGRAM_BOT_TOKEN:
+        print("Telegram bot NOT started: TELEGRAM_USERNAME and TELEGRAM_ALLOWED_CHAT_IDS are both required")
+
     yield
+
     # Shutdown
+    if telegram_task:
+        telegram_task.cancel()
     scheduler.shutdown(wait=False)
 
 

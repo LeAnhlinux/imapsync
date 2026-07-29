@@ -4,8 +4,7 @@ from ..models import now_vn
 from apscheduler.triggers.cron import CronTrigger
 
 from ..database import SessionLocal
-from ..models import Profile, Schedule, SyncJob
-from ..security import decrypt_password
+from ..models import Schedule
 
 scheduler = AsyncIOScheduler()
 
@@ -57,8 +56,7 @@ def _add_job(schedule: Schedule):
 
 async def _run_scheduled_sync(schedule_id: int):
     """Execute a scheduled sync job."""
-    from .imapsync_runner import start_sync
-    from .job_completion import finalize_job
+    from .sync_starter import start_profile_sync
 
     db = SessionLocal()
     try:
@@ -66,38 +64,16 @@ async def _run_scheduled_sync(schedule_id: int):
         if not schedule or not schedule.is_active:
             return
 
-        profile = db.query(Profile).filter(Profile.id == schedule.profile_id).first()
-        if not profile:
-            return
-
-        # Create job record
-        job = SyncJob(
-            user_id=schedule.user_id,
-            profile_id=profile.id,
-            source_account=f"{profile.user1}@{profile.host1}",
-            dest_account=f"{profile.user2}@{profile.host2}",
-            status="running",
-            started_at=now_vn(),
-        )
-        db.add(job)
-        db.commit()
-        db.refresh(job)
-
-        job.logfile = f"data/logs/{job.id}.txt"
-        db.commit()
+        user_id = schedule.user_id
+        profile_id = schedule.profile_id
 
         schedule.last_run_at = now_vn()
         db.commit()
-
-        await start_sync(
-            job_id=job.id,
-            host1=profile.host1, user1=profile.user1,
-            password1=decrypt_password(profile.password1_enc),
-            host2=profile.host2, user2=profile.user2,
-            password2=decrypt_password(profile.password2_enc),
-            ssl1=profile.ssl1, ssl2=profile.ssl2,
-            extra_options=profile.extra_options,
-            on_complete=finalize_job,
-        )
     finally:
         db.close()
+
+    try:
+        await start_profile_sync(user_id, profile_id)
+    except LookupError:
+        # Profile deleted out from under the schedule; nothing to run.
+        pass

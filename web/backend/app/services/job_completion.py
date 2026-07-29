@@ -41,6 +41,14 @@ async def finalize_job(job_id: int, exit_code: int, summary: dict) -> None:
 
     await _notify(user_id, job_id, status, job_summary)
 
+    # Imported here: telegram_bot -> sync_starter -> job_completion would be a
+    # circular import at module level.
+    from .telegram_bot import notify_job_finished
+    try:
+        await notify_job_finished(job_id, status, job_summary, user_id)
+    except Exception:
+        pass
+
 
 async def _notify(user_id: int, job_id: int, status: str, summary: str) -> None:
     if status == "aborted":
