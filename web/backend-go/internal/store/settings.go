@@ -295,3 +295,10 @@ func (db *DB) EnabledRetentions() ([]*Retention, error) {
 	}
 	return out, rows.Err()
 }
+
+// AbortBatch records a cancelled run and clears its credentials, the same way
+// finishing does.
+func (db *DB) AbortBatch(id int64) error {
+	_, err := db.Exec(`UPDATE batch_runs SET status='aborted', batch_data=NULL WHERE id=?`, id)
+	return err
+}

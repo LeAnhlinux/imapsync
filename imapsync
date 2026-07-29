@@ -1598,13 +1598,9 @@ $sync->{ warn_release } = ( $sync->{ releasecheck } ) ? check_last_release(  ) :
 
 $wholeheaderifneeded  = defined  $wholeheaderifneeded   ? $wholeheaderifneeded  : 1;
 
-# Activate --usecache by default for faster re-syncs (skip header re-parsing).
-# Previously only activated with --useuid; now on unless explicitly --nousecache.
-$sync->{ usecache } = defined $sync->{ usecache } ? $sync->{ usecache } : 1 ;
+# Activate --usecache if --useuid is set and there is no --nousecache
+$sync->{ usecache } = 1 if ( $useuid and ( ! defined  $sync->{ usecache }   ) ) ;
 $cacheaftercopy = 1 if ( $sync->{ usecache } and ( ! defined  $cacheaftercopy  ) ) ;
-if ( $sync->{ usecache } and ! $useuid ) {
-        myprint( "Info: --usecache is on by default for faster re-syncs. Use --nousecache to disable.\n" ) ;
-}
 
 $sync->{ checkfoldersexist } = defined $sync->{ checkfoldersexist } ? $sync->{ checkfoldersexist } : 1 ;
 $checkmessageexists = defined  $checkmessageexists  ? $checkmessageexists : 0 ;
@@ -2094,17 +2090,22 @@ myprint( 'Host2 capability once authenticated: ', join(q{ }, @{ $sync->{imap2}->
 
 imap_id_stuff( $sync ) ;
 
-# CONDSTORE detection: auto-enable if both servers support it
-if ( ! defined $sync->{ condstore } ) {
+# CONDSTORE delta sync is opt-in with --condstore.
+#
+# It skips messages whose MODSEQ has not moved since the last run, which is a
+# large speed-up and also the only option here that can cause a message to be
+# *not* copied. Defaulting it on would mean a wrong MODSEQ silently loses mail,
+# so it stays off until asked for, and refuses if either server lacks it.
+if ( $sync->{ condstore } ) {
         my $h1_condstore = $sync->{imap1}->has_capability( 'CONDSTORE' ) ? 1 : 0 ;
         my $h2_condstore = $sync->{imap2}->has_capability( 'CONDSTORE' ) ? 1 : 0 ;
-        $sync->{ condstore } = ( $h1_condstore and $h2_condstore ) ? 1 : 0 ;
-        if ( $sync->{ condstore } ) {
-                myprint( "CONDSTORE: both servers support CONDSTORE, enabling delta sync for changed messages.\n" ) ;
+        if ( $h1_condstore and $h2_condstore ) {
+                myprint( "CONDSTORE: enabled, only messages changed since the last run will be examined.\n" ) ;
         }
-}
-elsif ( $sync->{ condstore } ) {
-        myprint( "CONDSTORE: explicitly enabled by user.\n" ) ;
+        else {
+                myprint( "CONDSTORE: requested but host1 or host2 does not support it. Falling back to a full scan.\n" ) ;
+                $sync->{ condstore } = 0 ;
+        }
 }
 
 #quota( $sync, $sync->{imap1}, 'h1' ) ; # quota on host1 is useless and pollute host2 output.
@@ -2595,7 +2596,7 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         my $h2_msgs_all_hash_ref = {  } ;
         my @h2_msgs = select_msgs( $sync->{imap2}, $h2_msgs_all_hash_ref, $sync->{ search2 }, $sync->{abletosearch2}, $h2_fold ) ;
 
-        # reconnect check removed here: redundant with check after uidvalidity below
+        if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
 
         my $h2_msgs_nb = scalar  @h2_msgs  ;
 
@@ -2964,14 +2965,9 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         }
 
         my @h1_msgs_to_delete ;
-        my $mess_reconnect_counter = 0 ;
         MESS: foreach my $m_id (@h1_hash_keys_sorted_by_uid) {
                 abortifneeded( $sync ) ;
-                # Throttle reconnect check: every 100 messages instead of every message
-                if ( $mess_reconnect_counter % 100 == 0 ) {
-                        if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
-                }
-                $mess_reconnect_counter++ ;
+                if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
 
                 #myprint( "h1_nb_msg_processed: $sync->{ h1_nb_msg_processed }\n"  ) ;
                 my $h1_size  = $h1_hash{$m_id}{'s'};
@@ -3065,7 +3061,7 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
         # @h1_msgs_in_cache are already synced too.
         delete_message_on_host1( $sync, $h1_fold, $sync->{ expunge1 }, @h1_msgs_to_delete, @h1_msgs_in_cache ) ;
 
-        # reconnect check removed here: consolidated with check before MESS_BY_UID below
+        if ( ! reconnect_12_if_needed( $sync ) ) { last FOLDER ; }
 
         # MESS_IN_CACHE:
         if ( ! $sync->{ delete1 } )
@@ -22128,6 +22124,114 @@ sub testsdebug
 }
 
 
+# A stand-in for Mail::IMAPClient that records how parse_headers was called,
+# so batching can be checked without a server.
+{
+        package Imapsync::FakeImap ;
+        sub new { my $c = shift ; return bless { calls => [  ] }, $c }
+        sub parse_headers
+        {
+                my ( $self, $msgs_ref, @headers ) = @_ ;
+                push @{ $self->{ calls } }, scalar @{ $msgs_ref } ;
+                my %heads ;
+                foreach my $m ( @{ $msgs_ref } ) { $heads{ $m } = { 'Message-Id' => [ "id-$m" ] } }
+                return \%heads ;
+        }
+        sub calls { return @{ $_[0]->{ calls } } }
+}
+
+sub tests_batch_parse_headers
+{
+        note( 'Entering tests_batch_parse_headers()' ) ;
+
+        # Under the batch size it must stay a single round trip: chunking a
+        # small folder would only add latency.
+        my $imap = Imapsync::FakeImap->new(  ) ;
+        my $heads = batch_parse_headers( $imap, [ 1 .. 10 ], [ 'Message-Id' ], 100 ) ;
+        is( scalar $imap->calls, 1, 'batch_parse_headers: one call when under the batch size' ) ;
+        is( scalar keys %{ $heads }, 10, 'batch_parse_headers: all 10 headers returned' ) ;
+
+        # Over it, every message must still come back exactly once — a merge
+        # that dropped or duplicated a chunk would silently skip mail.
+        $imap = Imapsync::FakeImap->new(  ) ;
+        $heads = batch_parse_headers( $imap, [ 1 .. 25 ], [ 'Message-Id' ], 10 ) ;
+        is( scalar $imap->calls, 3, 'batch_parse_headers: 25 messages in batches of 10 is 3 calls' ) ;
+        is_deeply( [ $imap->calls ], [ 10, 10, 5 ], 'batch_parse_headers: last batch is the remainder' ) ;
+        is( scalar keys %{ $heads }, 25, 'batch_parse_headers: no message lost across batches' ) ;
+        is( $heads->{ 25 }->{ 'Message-Id' }->[ 0 ], 'id-25', 'batch_parse_headers: last message present' ) ;
+
+        # An exact multiple must not produce a trailing empty batch.
+        $imap = Imapsync::FakeImap->new(  ) ;
+        batch_parse_headers( $imap, [ 1 .. 20 ], [ 'Message-Id' ], 10 ) ;
+        is_deeply( [ $imap->calls ], [ 10, 10 ], 'batch_parse_headers: no empty trailing batch' ) ;
+
+        is_deeply( batch_parse_headers( Imapsync::FakeImap->new(  ), [  ], [ 'Message-Id' ], 10 ),
+                {  }, 'batch_parse_headers: empty input gives empty result' ) ;
+
+        note( 'Leaving  tests_batch_parse_headers()' ) ;
+        return ;
+}
+
+sub tests_condstore_modseq_cache
+{
+        note( 'Entering tests_condstore_modseq_cache()' ) ;
+
+        my $base = 'W/tmp/tests/condstore' ;
+        rmtree( $base ) if -d $base ;
+        my $key = 'h1/u1/h2/u2' ;
+
+        is( condstore_load_modseq( $base, $key, 'INBOX' ), undef,
+                'condstore: nothing cached yet reads as undef' ) ;
+
+        condstore_save_modseq( $base, $key, 'INBOX', 12345 ) ;
+        is( condstore_load_modseq( $base, $key, 'INBOX' ), 12345,
+                'condstore: a saved modseq reads back' ) ;
+
+        # Folders must not share a slot, or one folder's modseq would suppress
+        # another folder's changes.
+        condstore_save_modseq( $base, $key, 'Sent', 999 ) ;
+        is( condstore_load_modseq( $base, $key, 'INBOX' ), 12345,
+                'condstore: folders keep separate modseqs' ) ;
+        is( condstore_load_modseq( $base, $key, 'Sent' ), 999, 'condstore: second folder reads back' ) ;
+
+        # A folder name with a slash must not escape into a subdirectory.
+        condstore_save_modseq( $base, $key, 'INBOX/Sub Folder', 42 ) ;
+        is( condstore_load_modseq( $base, $key, 'INBOX/Sub Folder' ), 42,
+                'condstore: folder names with a separator round trip' ) ;
+
+        # Garbage must read as "no cache" rather than as a modseq: a bad value
+        # here would make the sync skip messages it never examined.
+        my $bad = "$base/$key/CONDSTORE_" . _folder_to_filename( 'Bad' ) ;
+        if ( open my $fh, '>', $bad ) { print {$fh} "not-a-number\n" ; close $fh }
+        is( condstore_load_modseq( $base, $key, 'Bad' ), undef,
+                'condstore: a non-numeric cache file is ignored' ) ;
+
+        rmtree( $base ) if -d $base ;
+        note( 'Leaving  tests_condstore_modseq_cache()' ) ;
+        return ;
+}
+
+sub tests_new_option_defaults
+{
+        note( 'Entering tests_new_option_defaults()' ) ;
+
+        # These defaults are the whole reason the fork can still take upstream
+        # changes: with none of the new flags given, imapsync must behave
+        # exactly as it did before they existed.
+        my $mysync = {  } ;
+        $mysync->{ batchsize }      = defined $mysync->{ batchsize }      ? $mysync->{ batchsize }      : 10000 ;
+        $mysync->{ parallel_count } = defined $mysync->{ parallel_count } ? $mysync->{ parallel_count } : 1 ;
+        $mysync->{ pipeline_depth } = defined $mysync->{ pipeline_depth } ? $mysync->{ pipeline_depth } : 0 ;
+
+        is( $mysync->{ parallel_count }, 1, 'defaults: --parallel is off (sequential folders)' ) ;
+        is( $mysync->{ pipeline_depth }, 0, 'defaults: --pipeline is off' ) ;
+        is( $mysync->{ condstore }, undef, 'defaults: --condstore is off until asked for' ) ;
+        ok( $mysync->{ batchsize } >= 1000, 'defaults: --batchsize only chunks very large folders' ) ;
+
+        note( 'Leaving  tests_new_option_defaults()' ) ;
+        return ;
+}
+
 sub tests
 {
         my $mysync = shift @ARG ;
@@ -22137,6 +22241,9 @@ sub tests
                 skip 'No test in normal run' if ( ! $mysync->{ tests } ) ;
                 note( 'Entering tests()' ) ;
                 tests_folder_routines(  ) ;
+                tests_batch_parse_headers(  ) ;
+                tests_condstore_modseq_cache(  ) ;
+                tests_new_option_defaults(  ) ;
                 tests_compare_lists(  ) ;
                 tests_regexmess(  ) ;
                 tests_skipmess(  ) ;

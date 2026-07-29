@@ -75,6 +75,8 @@ type AdhocParams struct {
 type BatchService interface {
 	Create(userID int64, csvText, filename string, opts map[string]any) (*store.BatchRun, error)
 	Start(batchID, userID int64, data store.JSONMap)
+	// Cancel reports whether the batch was running.
+	Cancel(batchID int64) bool
 }
 
 type FolderBrowser interface {
@@ -148,6 +150,7 @@ func (s *Server) Routes() http.Handler {
 			r.With(requireScope("batch:write")).Post("/batch/upload", s.batchUpload)
 			r.With(requireScope("batch:write")).Post("/batch/upload-text", s.batchUploadText)
 			r.With(requireScope("batch:write")).Post("/batch/{id}/start", s.batchStart)
+			r.With(requireScope("batch:write")).Post("/batch/{id}/abort", s.batchAbort)
 			r.With(requireScope("sync:read")).Get("/batch/{id}", s.getBatch)
 
 			// Settings, keys and webhooks are administration: an API key needs

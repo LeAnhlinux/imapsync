@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, PlayCircle, Upload } from 'lucide-react'
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, PlayCircle, Square, Upload } from 'lucide-react'
 import { batchApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Badge, StatusBadge } from '@/components/ui/badge'
@@ -91,6 +91,22 @@ export function BatchImportPage() {
     }
   }
 
+  const stop = async () => {
+    if (!batch) return
+    setLoading(true)
+    try {
+      await batchApi.abort(batch.id)
+      setError('')
+    } catch (err: unknown) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not stop the batch.',
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const reset = () => {
     setBatch(null)
     setFile(null)
@@ -141,7 +157,28 @@ export function BatchImportPage() {
             </div>
 
             {batch.status === 'running' && (
-              <Progress value={pct} label={`${done} of ${batch.total_rows} mailboxes`} />
+              <>
+                <Progress value={pct} label={`${done} of ${batch.total_rows} mailboxes`} />
+                <Button
+                  variant="outline"
+                  onClick={stop}
+                  disabled={loading}
+                  className="text-danger hover:bg-danger-soft"
+                >
+                  <Square className="mr-1.5 h-3 w-3" />
+                  Stop after this mailbox
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Stopping aborts the mailbox in flight. Mailboxes already copied stay copied.
+                </p>
+              </>
+            )}
+
+            {batch.status === 'aborted' && (
+              <p className="text-sm text-muted-foreground">
+                Stopped. {batch.completed_rows} mailbox(es) finished before it was cancelled — each
+                one is its own job in History.
+              </p>
             )}
 
             {batch.status === 'pending' && (

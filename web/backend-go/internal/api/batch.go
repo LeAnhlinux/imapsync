@@ -100,18 +100,58 @@ func (s *Server) getBatch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 	var b struct {
-		Host     string `json:"host"`
-		User     string `json:"user"`
-		Password string `json:"password"`
-		SSL      *bool  `json:"ssl"`
+		// Either name a stored profile, or pass credentials directly. The
+		// profile form exists because the browser is most useful when picking
+		// folders for a profile, whose password the client does not have.
+		ProfileID *int64 `json:"profile_id"`
+		Host      string `json:"host"`
+		User      string `json:"user"`
+		Password  string `json:"password"`
+		SSL       *bool  `json:"ssl"`
 	}
 	if !decodeJSON(w, r, &b) {
 		return
 	}
-	folders, err := s.Folders.Browse(b.Host, b.User, b.Password, boolOr(b.SSL, true))
+
+	host, user, password, ssl := b.Host, b.User, b.Password, boolOr(b.SSL, true)
+	if b.ProfileID != nil && *b.ProfileID > 0 {
+		p, err := s.DB.ProfileByID(*b.ProfileID, userFrom(r).ID)
+		if storeErr(w, err, "Profile not found") {
+			return
+		}
+		pw, err := s.Sec.Decrypt(p.Password1Enc)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		host, user, password, ssl = p.Host1, p.User1, pw, p.SSL1
+	}
+	if host == "" || user == "" || password == "" {
+		writeError(w, http.StatusBadRequest, "Provide profile_id, or host, user and password")
+		return
+	}
+
+	folders, err := s.Folders.Browse(host, user, password, ssl)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, folders)
+}
+
+func (s *Server) batchAbort(w http.ResponseWriter, r *http.Request) {
+	id, ok := urlID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Batch not found")
+		return
+	}
+	batch, err := s.DB.BatchByID(id, userFrom(r).ID)
+	if storeErr(w, err, "Batch not found") {
+		return
+	}
+	if !s.Batch.Cancel(batch.ID) {
+		writeError(w, http.StatusBadRequest, "This batch is not running.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "aborting"})
 }

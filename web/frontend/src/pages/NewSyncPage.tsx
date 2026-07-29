@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowRight, Check, Loader2, PlayCircle } from 'lucide-react'
+import { AlertCircle, ArrowRight, Check, FolderSearch, Loader2, PlayCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { PageHeader } from '@/components/ui/data'
-import { profileApi, syncApi } from '@/lib/api'
+import { PageHeader, formatBytes } from '@/components/ui/data'
+import { folderApi, profileApi, syncApi, type FolderInfo } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface Profile {
@@ -48,6 +48,41 @@ export function NewSyncPage() {
   const [automap, setAutomap] = useState(true)
   const [usecache, setUsecache] = useState(true)
   const [foldersText, setFoldersText] = useState('')
+
+  const [available, setAvailable] = useState<FolderInfo[] | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [browseError, setBrowseError] = useState('')
+
+  const chosen = new Set(foldersText.split('\n').map((f) => f.trim()).filter(Boolean))
+
+  const toggleFolder = (name: string) => {
+    const next = new Set(chosen)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    setFoldersText([...next].join('\n'))
+  }
+
+  const browse = async () => {
+    setBrowsing(true)
+    setBrowseError('')
+    try {
+      // With a profile the server holds the password, so it browses by id
+      // rather than asking the client for a credential it does not have.
+      const body = selectedProfile
+        ? { profile_id: selectedProfile }
+        : { host: host1, user: user1, password: password1, ssl: ssl1 }
+      const r = await folderApi.browse(body)
+      setAvailable(r.data)
+      if (r.data.length === 0) setBrowseError('The server returned no folders.')
+    } catch (err: unknown) {
+      setBrowseError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not list the folders.',
+      )
+    } finally {
+      setBrowsing(false)
+    }
+  }
 
   useEffect(() => {
     profileApi.list().then((r) => setProfiles(r.data)).catch(() => {})
@@ -279,14 +314,60 @@ export function NewSyncPage() {
             </fieldset>
 
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="folders">
-                Folders <span className="font-normal text-muted-foreground">(optional)</span>
-              </label>
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm font-medium" htmlFor="folders">
+                  Folders <span className="font-normal text-muted-foreground">(optional)</span>
+                </label>
+                <Button type="button" variant="outline" size="sm" onClick={browse} disabled={browsing}>
+                  {browsing ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderSearch className="mr-1.5 h-4 w-4" />
+                  )}
+                  {browsing ? 'Listing…' : 'Browse source'}
+                </Button>
+              </div>
+
+              {browsing && (
+                <p className="mb-2 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning">
+                  This opens a real IMAP connection and inspects every folder. A large mailbox can
+                  take several minutes — leave this tab open.
+                </p>
+              )}
+              {browseError && (
+                <p role="alert" className="mb-2 text-xs text-danger">{browseError}</p>
+              )}
+
+              {available && available.length > 0 && (
+                <div className="mb-2 max-h-56 overflow-y-auto rounded-md border border-border">
+                  {available.map((f) => (
+                    <label
+                      key={f.name}
+                      className="flex cursor-pointer items-center gap-2.5 border-b border-border px-3 py-1.5 text-sm last:border-b-0 hover:bg-subtle"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={chosen.has(f.name)}
+                        onChange={() => toggleFolder(f.name)}
+                        className="h-4 w-4"
+                      />
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.name}</span>
+                      <span className="tabular shrink-0 text-xs text-muted-foreground">
+                        {f.messages.toLocaleString()} msg
+                      </span>
+                      <span className="tabular w-20 shrink-0 text-right text-xs text-muted-foreground">
+                        {formatBytes(f.size)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+
               <textarea
                 id="folders"
                 value={foldersText}
                 onChange={(e) => setFoldersText(e.target.value)}
-                rows={4}
+                rows={3}
                 placeholder={'INBOX\nSent'}
                 className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm"
               />

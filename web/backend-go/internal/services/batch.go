@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imapsync/web-backend/internal/api"
@@ -94,6 +96,11 @@ type Batch struct {
 	Sec     *security.Manager
 	Starter *Starter
 	Runner  *runner.Runner
+
+	// Cancel functions for batches currently running, so a long import can be
+	// stopped without restarting the service.
+	mu      sync.Mutex
+	running map[int64]context.CancelFunc
 }
 
 // Create parses the CSV into a pending batch. Passwords are encrypted before
@@ -155,10 +162,40 @@ func (b *Batch) CreateFromRows(userID int64, rows []Row, filename string, opts m
 
 // Start runs the batch in the background, one mailbox at a time.
 func (b *Batch) Start(batchID, userID int64, data store.JSONMap) {
-	go b.run(batchID, userID, data)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	b.mu.Lock()
+	if b.running == nil {
+		b.running = map[int64]context.CancelFunc{}
+	}
+	b.running[batchID] = cancel
+	b.mu.Unlock()
+
+	go func() {
+		defer func() {
+			b.mu.Lock()
+			delete(b.running, batchID)
+			b.mu.Unlock()
+			cancel()
+		}()
+		b.run(ctx, batchID, userID, data)
+	}()
 }
 
-func (b *Batch) run(batchID, userID int64, data store.JSONMap) {
+// Cancel stops a running batch after the mailbox in flight, and aborts that
+// mailbox too. Reports whether the batch was actually running.
+func (b *Batch) Cancel(batchID int64) bool {
+	b.mu.Lock()
+	cancel, ok := b.running[batchID]
+	b.mu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (b *Batch) run(ctx context.Context, batchID, userID int64, data store.JSONMap) {
 	rows, _ := data["rows"].([]any)
 	dryRun := jsonBool(data["dry_run"], false)
 	ssl1 := jsonBool(data["ssl1"], true)
@@ -167,6 +204,12 @@ func (b *Batch) run(batchID, userID int64, data store.JSONMap) {
 	usecache := jsonBool(data["usecache"], true)
 
 	for _, raw := range rows {
+		// Checked before each mailbox: a cancelled batch stops here rather
+		// than working through the rest of the list.
+		if ctx.Err() != nil {
+			break
+		}
+
 		row, ok := raw.(map[string]any)
 		if !ok {
 			_ = b.DB.BumpBatchCounts(batchID, 0, 1)
@@ -207,12 +250,32 @@ func (b *Batch) run(batchID, userID int64, data store.JSONMap) {
 		// One mailbox at a time: several concurrent imapsync processes against
 		// the same server tend to hit connection limits.
 		if job := b.Runner.Get(jobID); job != nil {
-			job.Wait()
+			done := make(chan struct{})
+			go func() { job.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				// Stop the mailbox in flight too; waiting for a 9,000-message
+				// sync to finish is not what "cancel" means.
+				b.Runner.Abort(jobID)
+				_ = b.DB.MarkAborted(jobID)
+				<-done
+			}
+		}
+		if ctx.Err() != nil {
+			_ = b.DB.BumpBatchCounts(batchID, 0, 1)
+			break
 		}
 		_ = b.DB.BumpBatchCounts(batchID, 1, 0)
 	}
 
 	// Clearing batch_data is part of finishing: it holds credentials.
+	if ctx.Err() != nil {
+		if err := b.DB.AbortBatch(batchID); err != nil {
+			log.Printf("batch %d: %v", batchID, err)
+		}
+		return
+	}
 	if err := b.DB.FinishBatch(batchID); err != nil {
 		log.Printf("batch %d: %v", batchID, err)
 	}
