@@ -104,7 +104,10 @@ $SSH_CMD "chmod +x /usr/bin/imapsync"
 scp -q -P "$SSH_PORT" "$WEB_DIR/backend-go/dist/imapsync-web" "$WEB_DIR/backend-go/dist/createadmin" \
     "$SSH_USER@$SERVER_IP:$INSTALL_DIR/"
 $SSH_CMD "chmod +x $INSTALL_DIR/imapsync-web $INSTALL_DIR/createadmin"
-rsync -az -e "ssh -p $SSH_PORT" --delete "$WEB_DIR/frontend/dist/" "$SSH_USER@$SERVER_IP:$INSTALL_DIR/static/"
+# tar over ssh rather than rsync: tar is on every Debian install, rsync is not,
+# and this is a full replace anyway so there is nothing for rsync to diff.
+tar czf - -C "$WEB_DIR/frontend/dist" . \
+    | $SSH_CMD "rm -rf $INSTALL_DIR/static && mkdir -p $INSTALL_DIR/static && tar xzf - -C $INSTALL_DIR/static"
 print_ok "imapsync, binaries and frontend uploaded"
 
 #############################################################
