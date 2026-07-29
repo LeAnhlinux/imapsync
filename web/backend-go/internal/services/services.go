@@ -86,6 +86,8 @@ type Completion struct {
 	Mailer *Mailer
 	// Notify is set by the Telegram bot when it is running.
 	Notify func(jobID int64, status string, summary string, userID int64)
+	// Hooks delivers the same outcome to any registered webhook.
+	Hooks *Webhooks
 }
 
 func (c *Completion) Finish(jobID int64, exitCode int, s store.Summary) {
@@ -112,6 +114,9 @@ func (c *Completion) Finish(jobID int64, exitCode int, s store.Summary) {
 	}
 	if c.Notify != nil {
 		c.Notify(jobID, status, s.Text, job.UserID)
+	}
+	if c.Hooks != nil {
+		c.Hooks.Dispatch("job."+status, job.UserID, jobID)
 	}
 }
 
@@ -248,4 +253,3 @@ var (
 	_ api.Mailer      = (*Mailer)(nil)
 	_ api.CronService = (*Scheduler)(nil)
 )
-

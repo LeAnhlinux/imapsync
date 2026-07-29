@@ -137,6 +137,35 @@ var schema = []string{
 		notify_on_failure BOOLEAN
 	)`,
 
+	// Only a SHA-256 digest of an API key is stored; the key itself is shown
+	// once, at creation, and never again.
+	`CREATE TABLE IF NOT EXISTS api_keys (
+		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users(id),
+		name VARCHAR(100) NOT NULL,
+		prefix VARCHAR(16) NOT NULL,
+		key_hash VARCHAR(64) NOT NULL,
+		scopes VARCHAR(255),
+		rate_limit_per_minute INTEGER,
+		expires_at DATETIME,
+		last_used_at DATETIME,
+		revoked BOOLEAN,
+		created_at DATETIME
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ix_api_keys_hash ON api_keys (key_hash)`,
+
+	`CREATE TABLE IF NOT EXISTS webhooks (
+		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users(id),
+		url VARCHAR(500) NOT NULL,
+		secret_enc TEXT,
+		events VARCHAR(255),
+		is_active BOOLEAN,
+		last_status INTEGER,
+		last_called_at DATETIME,
+		created_at DATETIME
+	)`,
+
 	`CREATE TABLE IF NOT EXISTS telegram_settings (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
 		enabled BOOLEAN,

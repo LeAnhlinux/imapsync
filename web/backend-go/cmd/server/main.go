@@ -54,6 +54,8 @@ func main() {
 	defer scheduler.Stop()
 
 	batch := &services.Batch{DB: db, Sec: sec, Starter: starter, Runner: run}
+	hooks := services.NewWebhooks(db, sec)
+	completion.Hooks = hooks
 
 	// The bot reads its settings from the database, so it is a no-op until one
 	// is saved on the Settings page.
@@ -71,6 +73,7 @@ func main() {
 		Mailer:  mailer,
 		Cron:    scheduler,
 		Bot:     bot,
+		Hooks:   hooks,
 	}
 
 	httpServer := &http.Server{

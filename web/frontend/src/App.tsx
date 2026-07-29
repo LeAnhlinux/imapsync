@@ -12,6 +12,7 @@ import { HistoryPage } from '@/pages/HistoryPage'
 import { SchedulesPage } from '@/pages/SchedulesPage'
 import { BatchImportPage } from '@/pages/BatchImportPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { ApiKeysPage } from '@/pages/ApiKeysPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore()
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/schedules" element={<ProtectedRoute><SchedulesPage /></ProtectedRoute>} />
         <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
         <Route path="/batch" element={<ProtectedRoute><BatchImportPage /></ProtectedRoute>} />
+        <Route path="/api-access" element={<ProtectedRoute><ApiKeysPage /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

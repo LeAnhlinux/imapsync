@@ -11,6 +11,7 @@ import {
   Sun,
   Moon,
   Mail,
+  KeyRound,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
@@ -25,6 +26,7 @@ const navItems = [
   { path: '/schedules', label: 'Schedules', icon: Clock },
   { path: '/history', label: 'History', icon: FileSpreadsheet },
   { path: '/batch', label: 'Batch Import', icon: FileSpreadsheet },
+  { path: '/api-access', label: 'API Access', icon: KeyRound },
   { path: '/settings', label: 'Settings', icon: Settings },
 ]
 

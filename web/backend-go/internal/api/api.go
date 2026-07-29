@@ -42,6 +42,13 @@ type Server struct {
 	Folders FolderBrowser
 	Mailer  Mailer
 	Cron    CronService
+	Hooks   WebhookService
+}
+
+// WebhookService delivers job events to registered URLs.
+type WebhookService interface {
+	Dispatch(event string, userID, jobID int64)
+	Test(hookID int64) (int, error)
 }
 
 type Starter interface {
@@ -101,43 +108,64 @@ func (s *Server) Routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.authenticate)
 
+			// Scopes apply only to API keys; a browser session already
+			// authenticated as the user and is not scope-limited.
 			r.Get("/auth/me", s.me)
 
-			r.Get("/profiles", s.listProfiles)
-			r.Post("/profiles", s.createProfile)
-			r.Get("/profiles/{id}", s.getProfile)
-			r.Put("/profiles/{id}", s.updateProfile)
-			r.Delete("/profiles/{id}", s.deleteProfile)
+			r.With(requireScope("profiles:read")).Get("/profiles", s.listProfiles)
+			r.With(requireScope("profiles:read")).Get("/profiles/{id}", s.getProfile)
+			r.With(requireScope("profiles:write")).Post("/profiles", s.createProfile)
+			r.With(requireScope("profiles:write")).Put("/profiles/{id}", s.updateProfile)
+			r.With(requireScope("profiles:write")).Delete("/profiles/{id}", s.deleteProfile)
 
-			r.Post("/sync/start", s.startSync)
-			r.Get("/sync/running", s.runningSyncs)
-			r.Get("/sync/{id}", s.getSync)
-			r.Post("/sync/{id}/abort", s.abortSync)
-			r.Get("/sync/{id}/log", s.syncLog)
+			r.With(requireScope("sync:write")).Post("/sync/start", s.startSync)
+			r.With(requireScope("sync:write")).Post("/sync/{id}/abort", s.abortSync)
+			r.With(requireScope("sync:read")).Get("/sync/running", s.runningSyncs)
+			r.With(requireScope("sync:read")).Get("/sync/{id}", s.getSync)
+			r.With(requireScope("sync:read")).Get("/sync/{id}/log", s.syncLog)
 
-			r.Get("/history", s.history)
-			r.Get("/history/stats", s.historyStats)
+			r.With(requireScope("sync:read")).Get("/history", s.history)
+			r.With(requireScope("sync:read")).Get("/history/stats", s.historyStats)
 
-			r.Get("/schedules", s.listSchedules)
-			r.Post("/schedules", s.createSchedule)
-			r.Put("/schedules/{id}", s.updateSchedule)
-			r.Delete("/schedules/{id}", s.deleteSchedule)
+			r.With(requireScope("schedules:read")).Get("/schedules", s.listSchedules)
+			r.With(requireScope("schedules:write")).Post("/schedules", s.createSchedule)
+			r.With(requireScope("schedules:write")).Put("/schedules/{id}", s.updateSchedule)
+			r.With(requireScope("schedules:write")).Delete("/schedules/{id}", s.deleteSchedule)
 
-			r.Post("/folders/browse", s.browseFolders)
+			r.With(requireScope("profiles:read")).Post("/folders/browse", s.browseFolders)
 
-			r.Post("/batch/upload", s.batchUpload)
-			r.Post("/batch/upload-text", s.batchUploadText)
-			r.Post("/batch/{id}/start", s.batchStart)
-			r.Get("/batch/{id}", s.getBatch)
+			r.With(requireScope("batch:write")).Post("/batch/upload", s.batchUpload)
+			r.With(requireScope("batch:write")).Post("/batch/upload-text", s.batchUploadText)
+			r.With(requireScope("batch:write")).Post("/batch/{id}/start", s.batchStart)
+			r.With(requireScope("sync:read")).Get("/batch/{id}", s.getBatch)
 
-			r.Get("/notifications/settings", s.getNotifications)
-			r.Put("/notifications/settings", s.updateNotifications)
-			r.Post("/notifications/test", s.testNotifications)
+			// Settings, keys and webhooks are administration: an API key needs
+			// the admin scope, and issuing keys from a key is deliberate.
+			r.Group(func(r chi.Router) {
+				r.Use(requireScope("admin"))
 
-			r.Get("/telegram/settings", s.getTelegram)
-			r.Put("/telegram/settings", s.updateTelegram)
-			r.Get("/telegram/status", s.telegramStatus)
-			r.Post("/telegram/test", s.testTelegram)
+				r.Get("/notifications/settings", s.getNotifications)
+				r.Put("/notifications/settings", s.updateNotifications)
+				r.Post("/notifications/test", s.testNotifications)
+
+				r.Get("/api-keys", s.listAPIKeys)
+				r.Post("/api-keys", s.createAPIKey)
+				r.Get("/api-keys/scopes", s.listScopes)
+				r.Post("/api-keys/{id}/revoke", s.revokeAPIKey)
+				r.Delete("/api-keys/{id}", s.deleteAPIKey)
+
+				r.Get("/webhooks", s.listWebhooks)
+				r.Post("/webhooks", s.createWebhook)
+				r.Get("/webhooks/events", s.listEvents)
+				r.Put("/webhooks/{id}", s.updateWebhook)
+				r.Delete("/webhooks/{id}", s.deleteWebhook)
+				r.Post("/webhooks/{id}/test", s.testWebhook)
+
+				r.Get("/telegram/settings", s.getTelegram)
+				r.Put("/telegram/settings", s.updateTelegram)
+				r.Get("/telegram/status", s.telegramStatus)
+				r.Post("/telegram/test", s.testTelegram)
+			})
 		})
 	})
 

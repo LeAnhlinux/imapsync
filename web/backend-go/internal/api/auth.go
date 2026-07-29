@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/imapsync/web-backend/internal/security"
+	"github.com/imapsync/web-backend/internal/store"
 )
 
 // Failed logins are throttled per client address and username. In-process
@@ -57,26 +58,69 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// authenticate resolves the bearer token into the user for the request.
+// authenticate resolves the caller's credential into a user.
+//
+// Two kinds are accepted on the same header: a session JWT from the browser,
+// and a long-lived API key for programs. They are told apart by the key's
+// prefix, so an integration does not need a different endpoint or a login
+// round-trip.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		token, ok := strings.CutPrefix(header, "Bearer ")
-		if !ok || token == "" {
-			writeError(w, http.StatusUnauthorized, "Invalid token")
-			return
+		credential := r.Header.Get("X-API-Key")
+		if credential == "" {
+			token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if !ok || token == "" {
+				writeError(w, http.StatusUnauthorized, "Invalid token")
+				return
+			}
+			credential = token
 		}
-		userID, err := s.Sec.UserIDFromToken(token)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "Invalid token")
-			return
+
+		ctx := r.Context()
+		var user *store.User
+
+		if strings.HasPrefix(credential, KeyPrefix) {
+			key, err := s.DB.APIKeyByHash(hashKey(credential))
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "Invalid API key")
+				return
+			}
+			if !key.Usable() {
+				writeError(w, http.StatusUnauthorized, "This API key has been revoked or has expired")
+				return
+			}
+
+			remaining, reset, allowed := apiKeyLimiter.take(key.ID, key.RateLimit)
+			w.Header().Set("X-RateLimit-Limit", itoa(key.RateLimit))
+			w.Header().Set("X-RateLimit-Remaining", itoa(remaining))
+			w.Header().Set("X-RateLimit-Reset", itoa(int(reset.Unix())))
+			if !allowed {
+				w.Header().Set("Retry-After", itoa(int(time.Until(reset).Seconds())+1))
+				writeError(w, http.StatusTooManyRequests,
+					"Rate limit exceeded for this API key")
+				return
+			}
+
+			if user, err = s.DB.UserByID(key.UserID); err != nil {
+				writeError(w, http.StatusUnauthorized, "User not found")
+				return
+			}
+			// Best-effort: a failed timestamp update must not fail the request.
+			go func() { _ = s.DB.TouchAPIKey(key.ID) }()
+			ctx = context.WithValue(ctx, apiKeyCtxKey, key)
+		} else {
+			userID, err := s.Sec.UserIDFromToken(credential)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "Invalid token")
+				return
+			}
+			if user, err = s.DB.UserByID(userID); err != nil {
+				writeError(w, http.StatusUnauthorized, "User not found")
+				return
+			}
 		}
-		user, err := s.DB.UserByID(userID)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "User not found")
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
+
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userKey, user)))
 	})
 }
 

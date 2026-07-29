@@ -41,7 +41,7 @@ func (db *DB) CreateJob(j *SyncJob) error {
 }
 
 func (db *DB) JobByID(id int64) (*SyncJob, error) {
-	return scanJob(db.QueryRow(`SELECT ` + jobCols + ` FROM sync_jobs WHERE id=?`, id))
+	return scanJob(db.QueryRow(`SELECT `+jobCols+` FROM sync_jobs WHERE id=?`, id))
 }
 
 func (db *DB) JobByIDForUser(id, userID int64) (*SyncJob, error) {

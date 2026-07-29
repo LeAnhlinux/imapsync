@@ -109,6 +109,50 @@ export const telegramApi = {
   test: () => api.post<{ status: string; detail?: string }>('/telegram/test'),
 }
 
+// API keys
+export interface ApiKey {
+  id: number
+  name: string
+  prefix: string
+  scopes: string
+  rate_limit_per_minute: number
+  expires_at: string | null
+  last_used_at: string | null
+  revoked: boolean
+  created_at: string
+}
+
+export const apiKeyApi = {
+  list: () => api.get<ApiKey[]>('/api-keys'),
+  scopes: () => api.get<string[]>('/api-keys/scopes'),
+  // The key itself comes back exactly once, here.
+  create: (data: { name: string; scopes: string[]; rate_limit_per_minute: number; expires_in_days: number }) =>
+    api.post<ApiKey & { key: string }>('/api-keys', data),
+  revoke: (id: number) => api.post(`/api-keys/${id}/revoke`),
+  delete: (id: number) => api.delete(`/api-keys/${id}`),
+}
+
+// Webhooks
+export interface Webhook {
+  id: number
+  url: string
+  events: string
+  is_active: boolean
+  last_status: number | null
+  last_called_at: string | null
+  created_at: string
+}
+
+export const webhookApi = {
+  list: () => api.get<Webhook[]>('/webhooks'),
+  events: () => api.get<string[]>('/webhooks/events'),
+  create: (data: { url: string; events: string[] }) =>
+    api.post<Webhook & { secret: string }>('/webhooks', data),
+  update: (id: number, data: Record<string, unknown>) => api.put(`/webhooks/${id}`, data),
+  delete: (id: number) => api.delete(`/webhooks/${id}`),
+  test: (id: number) => api.post<{ status: string; http_status?: number; detail?: string }>(`/webhooks/${id}/test`),
+}
+
 // Notifications
 export const notificationApi = {
   get: () => api.get('/notifications/settings'),
