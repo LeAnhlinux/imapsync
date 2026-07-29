@@ -83,6 +83,32 @@ export const batchApi = {
   get: (id: number) => api.get(`/batch/${id}`),
 }
 
+// Telegram
+export interface TelegramSettings {
+  enabled: boolean
+  has_token: boolean
+  allowed_chat_ids: string
+  user_id: number | null
+  notify_on_success: boolean
+  notify_on_failure: boolean
+  notify_on_progress: boolean
+  progress_step: number
+}
+
+export interface TelegramStatus {
+  running: boolean
+  configured: boolean
+  bot_username: string | null
+  error: string | null
+}
+
+export const telegramApi = {
+  get: () => api.get<TelegramSettings>('/telegram/settings'),
+  update: (data: Record<string, unknown>) => api.put<TelegramSettings>('/telegram/settings', data),
+  status: () => api.get<TelegramStatus>('/telegram/status'),
+  test: () => api.post<{ status: string; detail?: string }>('/telegram/test'),
+}
+
 // Notifications
 export const notificationApi = {
   get: () => api.get('/notifications/settings'),

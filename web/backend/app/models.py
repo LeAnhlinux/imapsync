@@ -109,6 +109,29 @@ class BatchRun(Base):
     user = relationship("User", back_populates="batch_runs")
 
 
+class TelegramSettings(Base):
+    """Single-row table (id=1): one bot per installation.
+
+    The bot acts as one app user, so a per-user table would imply one polling
+    loop per user — more machinery than an admin tool needs.
+    """
+
+    __tablename__ = "telegram_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Boolean, default=False)
+    bot_token_enc = Column(Text, nullable=True)
+    # Comma-separated chat ids. This list is the bot's entire access control.
+    allowed_chat_ids = Column(String(500), nullable=True)
+    # The app user whose profiles and jobs the bot operates on.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    notify_on_success = Column(Boolean, default=True)
+    notify_on_failure = Column(Boolean, default=True)
+    notify_on_progress = Column(Boolean, default=True)
+    progress_step = Column(Integer, default=25)  # percent between updates
+    updated_at = Column(DateTime, default=now_vn, onupdate=now_vn)
+
+
 class NotificationSettings(Base):
     __tablename__ = "notification_settings"
 

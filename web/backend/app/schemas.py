@@ -176,6 +176,37 @@ class NotificationSettingsOut(BaseModel):
         from_attributes = True
 
 
+# --- Telegram ---
+class TelegramSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    # Write-only. Omit to keep the stored token, "" to forget it.
+    bot_token: str | None = None
+    allowed_chat_ids: str | None = None
+    user_id: int | None = None
+    notify_on_success: bool | None = None
+    notify_on_failure: bool | None = None
+    notify_on_progress: bool | None = None
+    progress_step: int | None = None
+
+
+class TelegramSettingsOut(BaseModel):
+    enabled: bool
+    has_token: bool
+    allowed_chat_ids: str
+    user_id: int | None
+    notify_on_success: bool
+    notify_on_failure: bool
+    notify_on_progress: bool
+    progress_step: int
+
+
+class TelegramStatus(BaseModel):
+    running: bool
+    configured: bool
+    bot_username: str | None = None
+    error: str | None = None
+
+
 # --- History ---
 class HistoryStats(BaseModel):
     total_syncs: int

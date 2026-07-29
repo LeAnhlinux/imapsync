@@ -32,6 +32,24 @@ class RunningJob:
 # Global registry of running jobs
 _running_jobs: dict[int, RunningJob] = {}
 
+# Called with (job_id, percent, folder) on every progress update. Listeners
+# decide for themselves how often that is worth acting on — the runner does not
+# want to know what a "milestone" means to each of them.
+_progress_listeners: list[Callable] = []
+
+
+def add_progress_listener(callback: Callable) -> None:
+    if callback not in _progress_listeners:
+        _progress_listeners.append(callback)
+
+
+async def _emit_progress(job_id: int, percent: float, folder: str) -> None:
+    for callback in _progress_listeners:
+        try:
+            await callback(job_id, percent, folder)
+        except Exception:
+            pass
+
 
 def get_running_jobs() -> dict[int, RunningJob]:
     return _running_jobs
@@ -159,6 +177,7 @@ async def _read_output(running_job: RunningJob, on_complete: Callable | None):
                     "eta": running_job.progress.get("eta", ""),
                 }
                 await running_job.broadcast({"type": "progress", **running_job.progress})
+                await _emit_progress(running_job.job_id, percent, running_job.progress["folder"])
 
             eta_match = _ETA_PATTERN.search(line)
             if eta_match:

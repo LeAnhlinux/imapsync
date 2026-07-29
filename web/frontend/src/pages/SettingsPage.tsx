@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { notificationApi } from '@/lib/api'
+import { notificationApi, telegramApi, type TelegramSettings, type TelegramStatus } from '@/lib/api'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,74 @@ export function SettingsPage() {
   })
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
+
+  const [tg, setTg] = useState<TelegramSettings>({
+    enabled: false, has_token: false, allowed_chat_ids: '', user_id: null,
+    notify_on_success: true, notify_on_failure: true, notify_on_progress: true, progress_step: 25,
+  })
+  const [tgToken, setTgToken] = useState('')
+  const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null)
+  const [tgSaved, setTgSaved] = useState(false)
+  const [tgError, setTgError] = useState<string | null>(null)
+  const [tgTest, setTgTest] = useState<string | null>(null)
+  const [tgBusy, setTgBusy] = useState(false)
+
+  const refreshTgStatus = () => {
+    telegramApi.status().then((r) => setTgStatus(r.data)).catch(() => {})
+  }
+
+  useEffect(() => {
+    if (!user?.is_admin) return
+    telegramApi.get().then((r) => {
+      setTg(r.data)
+      if (r.data.user_id === null) setTg({ ...r.data, user_id: user.id })
+    }).catch(() => {})
+    refreshTgStatus()
+  }, [user])
+
+  const handleTgSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTgError(null)
+    setTgTest(null)
+    setTgBusy(true)
+    try {
+      const payload: Record<string, unknown> = {
+        enabled: tg.enabled,
+        allowed_chat_ids: tg.allowed_chat_ids,
+        user_id: tg.user_id,
+        notify_on_success: tg.notify_on_success,
+        notify_on_failure: tg.notify_on_failure,
+        notify_on_progress: tg.notify_on_progress,
+        progress_step: tg.progress_step,
+      }
+      // Only send the token when the user typed a new one — the server never
+      // gives it back, so an empty box means "keep what you have".
+      if (tgToken) payload.bot_token = tgToken
+      const r = await telegramApi.update(payload)
+      setTg(r.data)
+      setTgToken('')
+      setTgSaved(true)
+      setTimeout(() => setTgSaved(false), 2000)
+      refreshTgStatus()
+    } catch (err: unknown) {
+      setTgError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Save failed')
+    } finally {
+      setTgBusy(false)
+    }
+  }
+
+  const handleTgTest = async () => {
+    setTgTest(null)
+    setTgBusy(true)
+    try {
+      const r = await telegramApi.test()
+      setTgTest(r.data.status === 'ok' ? `Test message sent. ${r.data.detail || ''}` : `Failed: ${r.data.detail || ''}`)
+    } catch {
+      setTgTest('Failed to send test message')
+    } finally {
+      setTgBusy(false)
+    }
+  }
 
   useEffect(() => {
     notificationApi.get().then((r) => {
@@ -125,6 +193,110 @@ export function SettingsPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Telegram bot */}
+      {user?.is_admin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span>Telegram Bot</span>
+              <span className="text-xs font-normal">
+                {tgStatus?.running ? (
+                  <span className="text-green-600 dark:text-green-500">
+                    running{tgStatus.bot_username ? ` as @${tgStatus.bot_username}` : ''}
+                  </span>
+                ) : tgStatus?.error ? (
+                  <span className="text-red-600 dark:text-red-500">error</span>
+                ) : (
+                  <span className="text-muted-foreground">stopped</span>
+                )}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleTgSave} className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Get a token from <code className="text-xs bg-muted px-1 py-0.5 rounded">@BotFather</code>, then message{' '}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">@userinfobot</code> to find your chat id.
+              </p>
+
+              <div>
+                <label className="text-sm font-medium">Bot Token</label>
+                <Input
+                  type="password"
+                  value={tgToken}
+                  onChange={(e) => setTgToken(e.target.value)}
+                  placeholder={tg.has_token ? 'Saved — leave empty to keep it' : '123456789:AA...'}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Allowed Chat IDs</label>
+                  <Input
+                    value={tg.allowed_chat_ids}
+                    onChange={(e) => setTg({ ...tg, allowed_chat_ids: e.target.value })}
+                    placeholder="123456789, 987654321"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Progress step (%)</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={tg.progress_step}
+                    onChange={(e) => setTg({ ...tg, progress_step: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+
+              <p className="text-sm text-amber-700 dark:text-amber-500">
+                Anyone in that chat-id list can start syncs, upload batches and read job summaries as{' '}
+                <strong>{user.username}</strong>. Keep it to yourself.
+              </p>
+
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={tg.enabled} onChange={(e) => setTg({ ...tg, enabled: e.target.checked })} />
+                  Enable bot
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={tg.notify_on_success} onChange={(e) => setTg({ ...tg, notify_on_success: e.target.checked })} />
+                  On success
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={tg.notify_on_failure} onChange={(e) => setTg({ ...tg, notify_on_failure: e.target.checked })} />
+                  On failure
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={tg.notify_on_progress} onChange={(e) => setTg({ ...tg, notify_on_progress: e.target.checked })} />
+                  Progress updates
+                </label>
+              </div>
+
+              <div className="flex gap-2">
+                <Button type="submit" disabled={tgBusy}>{tgSaved ? 'Saved!' : 'Save'}</Button>
+                <Button type="button" variant="outline" disabled={tgBusy || !tg.has_token} onClick={handleTgTest}>
+                  Send Test Message
+                </Button>
+              </div>
+
+              {tgError && <p className="text-sm text-red-600 dark:text-red-500">{tgError}</p>}
+              {tgTest && <p className="text-sm text-muted-foreground">{tgTest}</p>}
+              {tgStatus?.error && !tgStatus.running && (
+                <p className="text-sm text-red-600 dark:text-red-500">Bot error: {tgStatus.error}</p>
+              )}
+
+              <div className="text-sm text-muted-foreground border-t border-border pt-3">
+                <p className="font-medium mb-1">Commands</p>
+                <p><code className="text-xs">/profiles /sync &lt;id&gt; /jobs /status &lt;id&gt; /stop &lt;id&gt; /history</code></p>
+                <p className="mt-1">Send a .csv file with caption <code className="text-xs">/batch</code> to import mailboxes, then <code className="text-xs">/batchgo &lt;id&gt;</code> to run it.</p>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

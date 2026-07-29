@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -6,12 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .config import settings
 from .database import init_db
-from .routers import auth, profiles, sync, history, schedules, folders, batch, notifications, ws
+from .routers import auth, profiles, sync, history, schedules, folders, batch, notifications, telegram, ws
 from .services.job_completion import reconcile_orphan_jobs
 from .services.scheduler import init_scheduler, scheduler
-from .services.telegram_bot import run_bot
+from .services.telegram_bot import start_bot, stop_bot
 
 
 @asynccontextmanager
@@ -23,18 +21,13 @@ async def lifespan(app: FastAPI):
         print(f"Marked {interrupted} job(s) left running by a previous shutdown as interrupted")
     init_scheduler()
 
-    telegram_task = None
-    if settings.telegram_enabled:
-        telegram_task = asyncio.create_task(run_bot())
-        print("Telegram bot enabled")
-    elif settings.TELEGRAM_BOT_TOKEN:
-        print("Telegram bot NOT started: TELEGRAM_USERNAME and TELEGRAM_ALLOWED_CHAT_IDS are both required")
+    # Reads the telegram_settings table; a no-op when the bot is not enabled.
+    await start_bot()
 
     yield
 
     # Shutdown
-    if telegram_task:
-        telegram_task.cancel()
+    await stop_bot()
     scheduler.shutdown(wait=False)
 
 
@@ -58,6 +51,7 @@ app.include_router(schedules.router)
 app.include_router(folders.router)
 app.include_router(batch.router)
 app.include_router(notifications.router)
+app.include_router(telegram.router)
 app.include_router(ws.router)
 
 # Serve frontend static files in production
