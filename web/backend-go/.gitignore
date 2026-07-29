@@ -1,0 +1,5 @@
+# Build output. The binaries are ~18 MB each and are rebuilt by `make`;
+# committing them bloats every clone and makes every rebuild a diff.
+/dist/
+/imapsync-web
+/createadmin
