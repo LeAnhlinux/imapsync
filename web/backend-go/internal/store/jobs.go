@@ -1,0 +1,206 @@
+package store
+
+import (
+	"database/sql"
+	"errors"
+	"strings"
+)
+
+const jobCols = `id,user_id,profile_id,source_account,dest_account,COALESCE(status,''),pid,logfile,
+	started_at,finished_at,exit_code,COALESCE(messages_transferred,0),
+	COALESCE(bytes_transferred,0),COALESCE(errors_count,0),summary`
+
+func scanJob(s interface{ Scan(...any) error }) (*SyncJob, error) {
+	var j SyncJob
+	var started, finished sql.NullTime
+	err := s.Scan(&j.ID, &j.UserID, &j.ProfileID, &j.SourceAccount, &j.DestAccount, &j.Status,
+		&j.PID, &j.Logfile, &started, &finished, &j.ExitCode,
+		&j.MessagesTransferred, &j.BytesTransferred, &j.ErrorsCount, &j.Summary)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	j.StartedAt = naivePtr(started)
+	j.FinishedAt = naivePtr(finished)
+	return &j, nil
+}
+
+func (db *DB) CreateJob(j *SyncJob) error {
+	res, err := db.Exec(`INSERT INTO sync_jobs
+		(user_id,profile_id,source_account,dest_account,status,started_at,
+		 messages_transferred,bytes_transferred,errors_count)
+		VALUES (?,?,?,?,?,?,0,0,0)`,
+		j.UserID, j.ProfileID, j.SourceAccount, j.DestAccount, j.Status, naiveArg(j.StartedAt))
+	if err != nil {
+		return err
+	}
+	j.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func (db *DB) JobByID(id int64) (*SyncJob, error) {
+	return scanJob(db.QueryRow(`SELECT ` + jobCols + ` FROM sync_jobs WHERE id=?`, id))
+}
+
+func (db *DB) JobByIDForUser(id, userID int64) (*SyncJob, error) {
+	return scanJob(db.QueryRow(`SELECT `+jobCols+` FROM sync_jobs WHERE id=? AND user_id=?`, id, userID))
+}
+
+// JobBelongsTo answers the WebSocket's only question without loading the row.
+func (db *DB) JobBelongsTo(jobID, userID int64) bool {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM sync_jobs WHERE id=? AND user_id=?`, jobID, userID).Scan(&n)
+	return err == nil && n > 0
+}
+
+func (db *DB) SetJobPID(id int64, pid int) error {
+	_, err := db.Exec(`UPDATE sync_jobs SET pid=? WHERE id=?`, pid, id)
+	return err
+}
+
+func (db *DB) SetJobLogfile(id int64, path string) error {
+	_, err := db.Exec(`UPDATE sync_jobs SET logfile=? WHERE id=?`, path, id)
+	return err
+}
+
+func (db *DB) RunningJobs(userID int64) ([]*SyncJob, error) {
+	return db.queryJobs(`SELECT `+jobCols+` FROM sync_jobs WHERE user_id=? AND status='running' ORDER BY id DESC`, userID)
+}
+
+// FinishJob records the outcome. A user-requested abort makes imapsync exit
+// non-zero, so an already-aborted job keeps that status instead of being
+// relabelled "failed".
+func (db *DB) FinishJob(id int64, status string, exitCode int, s Summary) error {
+	_, err := db.Exec(`UPDATE sync_jobs SET status=?,exit_code=?,finished_at=?,
+		messages_transferred=?,bytes_transferred=?,errors_count=?,summary=? WHERE id=?`,
+		status, exitCode, NowVN().Format(TimeLayout),
+		s.MessagesTransferred, s.BytesTransferred, s.ErrorsCount, s.Text, id)
+	return err
+}
+
+func (db *DB) MarkAborted(id int64) error {
+	_, err := db.Exec(`UPDATE sync_jobs SET status='aborted', finished_at=? WHERE id=?`,
+		NowVN().Format(TimeLayout), id)
+	return err
+}
+
+// ReconcileOrphans marks jobs left "running" by a crash or restart. The
+// registry of live subprocesses is in memory, so a restart loses track of them
+// and those rows would stay "running" forever.
+func (db *DB) ReconcileOrphans() (int64, error) {
+	res, err := db.Exec(`UPDATE sync_jobs
+		SET status='interrupted', finished_at=?,
+		    summary=COALESCE(summary,'') || char(10) || 'Job interrupted: the server restarted while it was running.'
+		WHERE status='running'`, NowVN().Format(TimeLayout))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// Summary holds the numbers parsed out of an imapsync run.
+type Summary struct {
+	MessagesTransferred int
+	BytesTransferred    int64
+	ErrorsCount         int
+	Text                string
+	Aborted             bool
+}
+
+type HistoryFilter struct {
+	UserID  int64
+	Status  string
+	Query   string
+	Page    int
+	PerPage int
+}
+
+func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
+	where := []string{"user_id=?"}
+	args := []any{f.UserID}
+	if f.Status != "" {
+		where = append(where, "status=?")
+		args = append(args, f.Status)
+	}
+	if f.Query != "" {
+		where = append(where, "(COALESCE(summary,'') LIKE ? OR COALESCE(source_account,'') LIKE ? OR COALESCE(dest_account,'') LIKE ?)")
+		like := "%" + f.Query + "%"
+		args = append(args, like, like, like)
+	}
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PerPage < 1 || f.PerPage > 100 {
+		f.PerPage = 20
+	}
+	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
+
+	q := `SELECT ` + jobCols + ` FROM sync_jobs WHERE ` + strings.Join(where, " AND ") +
+		` ORDER BY id DESC LIMIT ? OFFSET ?`
+	return db.queryJobs(q, args...)
+}
+
+func (db *DB) HistoryCount(f HistoryFilter) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM sync_jobs WHERE user_id=?`, f.UserID).Scan(&n)
+	return n, err
+}
+
+type Stats struct {
+	TotalSyncs    int     `json:"total_syncs"`
+	Successful    int     `json:"successful"`
+	Failed        int     `json:"failed"`
+	TotalMessages int64   `json:"total_messages"`
+	TotalBytes    int64   `json:"total_bytes"`
+	SuccessRate   float64 `json:"success_rate"`
+}
+
+func (db *DB) Stats(userID int64) (*Stats, error) {
+	var s Stats
+	err := db.QueryRow(`SELECT
+		COUNT(*),
+		SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),
+		SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),
+		COALESCE(SUM(messages_transferred),0),
+		COALESCE(SUM(bytes_transferred),0)
+		FROM sync_jobs WHERE user_id=?`, userID).
+		Scan(&s.TotalSyncs, &s.Successful, &s.Failed, &s.TotalMessages, &s.TotalBytes)
+	if err != nil {
+		return nil, err
+	}
+	if s.TotalSyncs > 0 {
+		s.SuccessRate = float64(int(float64(s.Successful)/float64(s.TotalSyncs)*1000+0.5)) / 10
+	}
+	return &s, nil
+}
+
+func (db *DB) RecentJobs(userID int64, limit int) ([]*SyncJob, error) {
+	return db.queryJobs(`SELECT `+jobCols+` FROM sync_jobs WHERE user_id=? ORDER BY id DESC LIMIT ?`, userID, limit)
+}
+
+func (db *DB) queryJobs(q string, args ...any) ([]*SyncJob, error) {
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*SyncJob{}
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// naiveArg renders a nullable timestamp for SQLite in SQLAlchemy's layout.
+func naiveArg(t *NaiveTime) any {
+	if t == nil {
+		return nil
+	}
+	return t.Format(TimeLayout)
+}
