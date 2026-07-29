@@ -6,8 +6,31 @@ from jose import jwt
 
 from .config import settings
 
-# Fernet cipher for encrypting IMAP passwords at rest
-_fernet = Fernet(settings.IMAPSYNC_FERNET_KEY.encode() if len(settings.IMAPSYNC_FERNET_KEY) > 10 else Fernet.generate_key())
+def _build_fernet() -> Fernet:
+    """Fernet cipher for encrypting IMAP passwords at rest.
+
+    Falling back to a generated key would silently make every stored password
+    undecryptable on the next restart (and give each uvicorn worker its own
+    key), so an unusable key is a startup failure instead.
+    """
+    key = settings.IMAPSYNC_FERNET_KEY
+    try:
+        return Fernet(key.encode())
+    except Exception as exc:
+        raise RuntimeError(
+            "IMAPSYNC_FERNET_KEY is missing or invalid. Generate one with:\n"
+            "  python3 -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\"\n"
+            "and set it in your .env file."
+        ) from exc
+
+
+if settings.SECRET_KEY == "change-me-in-production":
+    raise RuntimeError(
+        "SECRET_KEY is still the default value. Generate one with: openssl rand -hex 32"
+    )
+
+_fernet = _build_fernet()
 
 
 def hash_password(password: str) -> str:

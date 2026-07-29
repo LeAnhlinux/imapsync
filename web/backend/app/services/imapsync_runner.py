@@ -4,11 +4,11 @@ import re
 import signal
 import tempfile
 from collections import deque
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from ..config import settings
+from .imapsync_options import sanitize_extra_options
 
 
 class RunningJob:
@@ -19,6 +19,7 @@ class RunningJob:
         self.log_lines: deque[str] = deque(maxlen=10000)
         self.subscribers: list[Callable] = []
         self.progress: dict = {}
+        self.aborted = False
 
     async def broadcast(self, message: dict):
         for callback in self.subscribers:
@@ -56,7 +57,7 @@ async def start_sync(
     on_complete: Callable | None = None,
 ) -> RunningJob:
     """Start an imapsync subprocess and track it."""
-    logfile = str(settings.LOG_DIR / f"{job_id}.txt")
+    logfile = str(settings.LOG_DIR.resolve() / f"{job_id}.txt")
 
     # Write passwords to temp files (0600 perms)
     passfile1 = tempfile.NamedTemporaryFile(mode='w', prefix='imapsync_p1_', delete=False)
@@ -69,6 +70,12 @@ async def start_sync(
     passfile2.close()
     os.chmod(passfile2.name, 0o600)
 
+    # Ensure tmpdir and cache dir exist with proper permissions
+    tmpdir = str(settings.DATA_DIR / "tmp")
+    cachedir = str(settings.DATA_DIR / "cache")
+    os.makedirs(tmpdir, exist_ok=True)
+    os.makedirs(cachedir, exist_ok=True)
+
     cmd = [
         settings.IMAPSYNC_PATH,
         '--host1', host1,
@@ -77,8 +84,9 @@ async def start_sync(
         '--host2', host2,
         '--user2', user2,
         '--passfile2', passfile2.name,
-        '--logfile', logfile,
-        '--pidfile', f'/tmp/imapsync_{job_id}.pid',
+        '--nolog',
+        '--tmpdir', tmpdir,
+        '--pidfile', f'{tmpdir}/imapsync_{job_id}.pid',
     ]
 
     if ssl1:
@@ -91,14 +99,15 @@ async def start_sync(
         for f in folders:
             cmd.extend(['--folder', f])
 
-    # Extra options (e.g. --automap, --addheader)
-    if extra_options:
-        for key, value in extra_options.items():
-            if isinstance(value, bool):
-                if value:
-                    cmd.append(f'--{key}')
-            elif value is not None:
-                cmd.extend([f'--{key}', str(value)])
+    # Extra options (e.g. --automap, --addheader). Anything outside the allowlist
+    # is dropped here: these values reach imapsync's argv, which can run shell
+    # commands or eval Perl via options like --pipemess or --regexmess.
+    safe_options, rejected_options = sanitize_extra_options(extra_options)
+    for key, value in safe_options.items():
+        if value is True:
+            cmd.append(f'--{key}')
+        else:
+            cmd.extend([f'--{key}', str(value)])
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
@@ -106,17 +115,12 @@ async def start_sync(
         stderr=asyncio.subprocess.STDOUT,
     )
 
-    # Clean up passfiles immediately after process starts
-    try:
-        os.unlink(passfile1.name)
-    except OSError:
-        pass
-    try:
-        os.unlink(passfile2.name)
-    except OSError:
-        pass
-
     running_job = RunningJob(job_id, process, logfile)
+    running_job._passfiles = [passfile1.name, passfile2.name]  # cleaned after process exits
+    if rejected_options:
+        running_job.log_lines.append(
+            f"Warning: ignored unsupported or unsafe options: {', '.join(sorted(rejected_options))}"
+        )
     _running_jobs[job_id] = running_job
 
     # Start background log reader
@@ -128,9 +132,9 @@ async def start_sync(
 # Regex patterns for parsing imapsync output
 _FOLDER_PATTERN = re.compile(r'Syncing folder \[.*?\] \((\d+)/(\d+)\)')
 _ETA_PATTERN = re.compile(r'ETA:\s*(\S+)')
-_TRANSFER_PATTERN = re.compile(r'(\d+) messages? transferred')
-_BYTES_PATTERN = re.compile(r'Transferred:\s+(\d+)')
-_ERRORS_PATTERN = re.compile(r'Errors:\s+(\d+)')
+_TRANSFER_PATTERN = re.compile(r'Messages transferred\s*:\s*(\d+)')
+_BYTES_PATTERN = re.compile(r'Total bytes transferred\s*:\s*(\d+)')
+_ERRORS_PATTERN = re.compile(r'Detected\s+(\d+)\s+errors')
 
 
 async def _read_output(running_job: RunningJob, on_complete: Callable | None):
@@ -168,11 +172,30 @@ async def _read_output(running_job: RunningJob, on_complete: Callable | None):
 
     exit_code = running_job.process.returncode or 0
 
+    # Clean up passfiles now that process has exited
+    for pf in getattr(running_job, '_passfiles', []):
+        try:
+            os.unlink(pf)
+        except OSError:
+            pass
+
+    # Save log to file for later retrieval
+    try:
+        logpath = Path(running_job.logfile)
+        logpath.parent.mkdir(parents=True, exist_ok=True)
+        logpath.write_text('\n'.join(running_job.log_lines), encoding='utf-8')
+    except Exception:
+        pass
+
     # Parse summary from log
     summary = _parse_summary(running_job.log_lines)
 
     # Broadcast completion
-    status = "completed" if exit_code == 0 else "failed"
+    if running_job.aborted:
+        status = "aborted"
+    else:
+        status = "completed" if exit_code == 0 else "failed"
+    summary["aborted"] = running_job.aborted
     await running_job.broadcast({"type": "status", "status": status, "exit_code": exit_code})
 
     # Remove from running
@@ -213,6 +236,7 @@ async def abort_job(job_id: int) -> bool:
     if not running_job:
         return False
 
+    running_job.aborted = True
     try:
         running_job.process.send_signal(signal.SIGTERM)
         # Give it 5 seconds to clean up
@@ -226,14 +250,15 @@ async def abort_job(job_id: int) -> bool:
 
 
 def get_job_log(job_id: int) -> str | None:
-    """Read the log file for a job."""
-    logfile = settings.LOG_DIR / f"{job_id}.txt"
-    if logfile.exists():
-        return logfile.read_text(errors='replace')
-
-    # Check running job's in-memory buffer
+    """Read log from in-memory buffer (running/finished) or saved log file."""
+    # Check running job's in-memory buffer first
     running_job = _running_jobs.get(job_id)
     if running_job:
         return '\n'.join(running_job.log_lines)
+
+    # Check saved log file
+    logfile = settings.LOG_DIR.resolve() / f"{job_id}.txt"
+    if logfile.exists():
+        return logfile.read_text(errors='replace')
 
     return None

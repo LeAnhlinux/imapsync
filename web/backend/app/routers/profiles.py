@@ -5,8 +5,20 @@ from ..deps import get_current_user, get_db
 from ..models import Profile, User
 from ..schemas import ProfileCreate, ProfileOut, ProfileUpdate
 from ..security import encrypt_password
+from ..services.imapsync_options import sanitize_extra_options
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
+
+
+def _validate_extra_options(extra: dict | None) -> dict:
+    """Reject unsupported options at the API boundary so the user sees why."""
+    accepted, rejected = sanitize_extra_options(extra)
+    if rejected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported or unsafe imapsync options: {', '.join(sorted(rejected))}",
+        )
+    return accepted
 
 
 @router.get("", response_model=list[ProfileOut])
@@ -25,7 +37,7 @@ def create_profile(data: ProfileCreate, user: User = Depends(get_current_user), 
         host2=data.host2, user2=data.user2,
         password2_enc=encrypt_password(data.password2),
         ssl2=data.ssl2,
-        extra_options=data.extra_options,
+        extra_options=_validate_extra_options(data.extra_options),
     )
     db.add(profile)
     db.commit()
@@ -56,7 +68,7 @@ def update_profile(profile_id: int, data: ProfileUpdate, user: User = Depends(ge
     if data.user2 is not None: profile.user2 = data.user2
     if data.password2 is not None: profile.password2_enc = encrypt_password(data.password2)
     if data.ssl2 is not None: profile.ssl2 = data.ssl2
-    if data.extra_options is not None: profile.extra_options = data.extra_options
+    if data.extra_options is not None: profile.extra_options = _validate_extra_options(data.extra_options)
 
     db.commit()
     db.refresh(profile)
