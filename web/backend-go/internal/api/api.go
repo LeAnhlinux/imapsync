@@ -120,6 +120,8 @@ func (s *Server) Routes() http.Handler {
 
 			r.With(requireScope("sync:write")).Post("/sync/start", s.startSync)
 			r.With(requireScope("sync:write")).Post("/sync/{id}/abort", s.abortSync)
+			r.With(requireScope("sync:write")).Delete("/sync/{id}", s.deleteSync)
+			r.With(requireScope("sync:write")).Post("/history/purge", s.purgeHistory)
 			r.With(requireScope("sync:read")).Get("/sync/running", s.runningSyncs)
 			r.With(requireScope("sync:read")).Get("/sync/{id}", s.getSync)
 			r.With(requireScope("sync:read")).Get("/sync/{id}/log", s.syncLog)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { History, Search, X } from 'lucide-react'
+import { History, Search, Trash2, X } from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,6 +40,11 @@ export function HistoryPage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [log, setLog] = useState<{ id: number; text: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<Job | null>(null)
+  const [showPurge, setShowPurge] = useState(false)
+  const [purgeDays, setPurgeDays] = useState(30)
+  const [notice, setNotice] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     setLoading(true)
@@ -51,16 +56,68 @@ export function HistoryPage() {
       .then((r) => setJobs(r.data))
       .catch(() => setJobs([]))
       .finally(() => setLoading(false))
-  }, [page, status, query])
+  }, [page, status, query, reloadKey])
 
   const viewLog = async (id: number) => {
     const res = await syncApi.log(id)
     setLog({ id, text: res.data.log })
   }
 
+  const doDelete = async () => {
+    if (!confirmDelete) return
+    try {
+      await syncApi.delete(confirmDelete.id)
+      setNotice(`Job #${confirmDelete.id} and its log were deleted.`)
+    } catch (err: unknown) {
+      setNotice(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not delete that job.',
+      )
+    }
+    setConfirmDelete(null)
+    setReloadKey((k) => k + 1)
+  }
+
+  const doPurge = async () => {
+    try {
+      const r = await historyApi.purge(purgeDays)
+      setNotice(
+        r.data.deleted === 0
+          ? 'Nothing was old enough to clear.'
+          : `Cleared ${r.data.deleted} job(s) and their logs.`,
+      )
+    } catch {
+      setNotice('Could not clear the history.')
+    }
+    setShowPurge(false)
+    setPage(1)
+    setReloadKey((k) => k + 1)
+  }
+
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="History" description="Every sync this account has run." />
+      <PageHeader
+        title="History"
+        description="Every sync this account has run."
+        actions={
+          <Button variant="outline" onClick={() => setShowPurge(true)}>
+            <Trash2 className="mr-1.5 h-4 w-4" />
+            Clear old
+          </Button>
+        }
+      />
+
+      {notice && (
+        <div
+          role="status"
+          className="mb-3 flex items-center justify-between gap-2 rounded-md bg-subtle px-3 py-2 text-sm"
+        >
+          <span>{notice}</span>
+          <button onClick={() => setNotice('')} aria-label="Dismiss">
+            <X className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
@@ -187,9 +244,21 @@ export function HistoryPage() {
                     {formatDateTime(j.started_at)}
                   </Td>
                   <Td align="right">
-                    <Button variant="ghost" size="sm" onClick={() => viewLog(j.id)}>
-                      Log
-                    </Button>
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => viewLog(j.id)}>
+                        Log
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:bg-danger-soft hover:text-danger"
+                        onClick={() => setConfirmDelete(j)}
+                        aria-label={`Delete job ${j.id}`}
+                        disabled={j.status === 'running'}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </Td>
                 </Tr>
               ))}
@@ -219,6 +288,84 @@ export function HistoryPage() {
           </Button>
         </div>
       </div>
+
+      {/* Deleting a job also deletes its log, which is the part that takes real
+          space, so the dialog says so rather than implying only a row goes. */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setConfirmDelete(null)}
+            aria-label="Cancel"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-xl"
+          >
+            <h2 className="text-sm font-semibold">Delete job #{confirmDelete.id}?</h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              The record and its saved log are removed. Messages already copied into the
+              destination mailbox are not touched.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+              <Button variant="destructive" onClick={doDelete}>Delete job</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPurge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setShowPurge(false)}
+            aria-label="Cancel"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-xl"
+          >
+            <h2 className="text-sm font-semibold">Clear old history</h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Removes finished jobs and their logs. Running jobs are never touched.
+            </p>
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium" htmlFor="days">
+                Older than
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[7, 30, 90, 0].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setPurgeDays(d)}
+                    className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+                      purgeDays === d
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-subtle text-muted-foreground hover:bg-accent'
+                    }`}
+                  >
+                    {d === 0 ? 'Everything' : `${d} days`}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {purgeDays === 0 && (
+              <p className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
+                This clears every finished job in your history.
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowPurge(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={doPurge}>
+                {purgeDays === 0 ? 'Clear everything' : `Clear older than ${purgeDays} days`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {log && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

@@ -206,3 +206,65 @@ func naiveArg(t *NaiveTime) any {
 	}
 	return t.Format(TimeLayout)
 }
+
+// DeleteJob removes one job, returning its log file path so the caller can
+// delete that too — the row is small, the log is not.
+func (db *DB) DeleteJob(id, userID int64) (string, error) {
+	var logfile sql.NullString
+	var status string
+	err := db.QueryRow(`SELECT COALESCE(status,''), logfile FROM sync_jobs WHERE id=? AND user_id=?`,
+		id, userID).Scan(&status, &logfile)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if status == "running" {
+		return "", ErrJobRunning
+	}
+	if _, err := db.Exec(`DELETE FROM sync_jobs WHERE id=? AND user_id=?`, id, userID); err != nil {
+		return "", err
+	}
+	return logfile.String, nil
+}
+
+// ErrJobRunning is returned rather than silently deleting the row of a job
+// whose process is still writing to it.
+var ErrJobRunning = errors.New("job is still running")
+
+// PurgeJobs deletes finished jobs started before the cutoff, returning their
+// ids so their logs can be removed too. Running jobs are never touched.
+//
+// started_at is stored zero-padded, so a plain string comparison orders it
+// correctly without parsing.
+func (db *DB) PurgeJobs(userID int64, before NaiveTime) ([]int64, error) {
+	const where = `user_id=? AND status<>'running' AND started_at IS NOT NULL AND started_at < ?`
+	cutoff := before.Format(TimeLayout)
+
+	rows, err := db.Query(`SELECT id FROM sync_jobs WHERE `+where, userID, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	if _, err := db.Exec(`DELETE FROM sync_jobs WHERE `+where, userID, cutoff); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

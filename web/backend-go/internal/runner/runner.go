@@ -400,3 +400,9 @@ func writePassfile(dir, prefix, password string) (string, error) {
 	}
 	return f.Name(), nil
 }
+
+// DeleteLog removes a job's saved output. Called when the job row goes away:
+// the row is a few hundred bytes, the log can be megabytes.
+func (r *Runner) DeleteLog(jobID int64) {
+	_ = os.Remove(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", jobID)))
+}

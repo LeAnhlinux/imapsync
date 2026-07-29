@@ -48,12 +48,16 @@ export const syncApi = {
   get: (id: number) => api.get(`/sync/${id}`),
   abort: (id: number) => api.post(`/sync/${id}/abort`),
   log: (id: number) => api.get(`/sync/${id}/log`),
+  delete: (id: number) => api.delete(`/sync/${id}`),
 }
 
 // History
 export const historyApi = {
   list: (params?: Record<string, unknown>) => api.get('/history', { params }),
   stats: () => api.get('/history/stats'),
+  // Deletes finished jobs older than the cutoff, and their logs.
+  purge: (olderThanDays: number) =>
+    api.post<{ deleted: number }>('/history/purge', { older_than_days: olderThanDays }),
 }
 
 // Schedules

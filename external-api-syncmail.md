@@ -112,6 +112,7 @@ Errors always carry a `detail` string:
 | 401 | missing, invalid, revoked or expired credential |
 | 403 | authenticated, but the key lacks the scope (or the route is admin-only) |
 | 404 | no such object, or it belongs to someone else |
+| 409 | the job is still running; stop it before deleting |
 | 429 | rate limited |
 | 502 | an upstream IMAP server could not be reached |
 
@@ -188,6 +189,7 @@ job did not finish.
 | GET | `/api/sync/{id}` | `sync:read` | one job |
 | GET | `/api/sync/{id}/log` | `sync:read` | `{"log": "..."}` — live buffer, or the saved file |
 | POST | `/api/sync/{id}/abort` | `sync:write` | SIGTERM, escalating to SIGKILL after 5s |
+| DELETE | `/api/sync/{id}` | `sync:write` | delete the job and its saved log |
 
 An aborted job keeps `status: "aborted"` — imapsync exits non-zero when
 signalled, and that is not recorded as a failure.
@@ -430,6 +432,23 @@ Query: `page` (default 1), `per_page` (default 20, max 100), `status`, `q`
 
 The total row count is in the `X-Total-Count` response header.
 
+### `POST /api/history/purge` — scope `sync:write`
+
+Deletes finished jobs and their logs. Running jobs are never touched.
+
+```json
+{ "older_than_days": 30 }
+```
+
+`0` clears every finished job. Returns the count:
+
+```json
+{ "deleted": 12 }
+```
+
+Logs are the reason this exists: a job row is a few hundred bytes, but its
+imapsync output can be megabytes, and nothing else removes them.
+
 ### `GET /api/history/stats` — scope `sync:read`
 
 ```json
@@ -551,6 +570,8 @@ The API takes mailbox passwords, so:
 | POST | `/api/folders/browse` | `profiles:read` |
 | POST | `/api/sync/start` | `sync:write` |
 | POST | `/api/sync/{id}/abort` | `sync:write` |
+| DELETE | `/api/sync/{id}` | `sync:write` |
+| POST | `/api/history/purge` | `sync:write` |
 | GET | `/api/sync/running` | `sync:read` |
 | GET | `/api/sync/{id}` | `sync:read` |
 | GET | `/api/sync/{id}/log` | `sync:read` |

@@ -205,3 +205,46 @@ func joinSorted(items []string) string {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func (s *Server) deleteSync(w http.ResponseWriter, r *http.Request) {
+	id, ok := urlID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Job not found")
+		return
+	}
+	_, err := s.DB.DeleteJob(id, userFrom(r).ID)
+	if errors.Is(err, store.ErrJobRunning) {
+		writeError(w, http.StatusConflict, "This job is still running. Stop it first, then delete it.")
+		return
+	}
+	if storeErr(w, err, "Job not found") {
+		return
+	}
+	s.Runner.DeleteLog(id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// purgeHistory clears finished jobs older than a cutoff, with their logs.
+func (s *Server) purgeHistory(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		OlderThanDays int `json:"older_than_days"`
+	}
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	if b.OlderThanDays < 0 {
+		writeError(w, http.StatusBadRequest, "older_than_days cannot be negative")
+		return
+	}
+
+	cutoff := store.NaiveTime{Time: store.NowVN().AddDate(0, 0, -b.OlderThanDays)}
+	ids, err := s.DB.PurgeJobs(userFrom(r).ID, cutoff)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, id := range ids {
+		s.Runner.DeleteLog(id)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": len(ids)})
+}
