@@ -320,26 +320,38 @@ func (b *Bot) NotifyJobFinished(jobID int64, status, summary string, userID int6
 		return
 	}
 
-	route, messages := "", 0
-	if job, err := b.DB.JobByID(jobID); err == nil {
-		route = deref(job.SourceAccount) + " -> " + deref(job.DestAccount)
-		messages = job.MessagesTransferred
-	}
-
-	label := strings.ToUpper(status)
+	mark, label := "•", status
 	switch status {
 	case "completed":
-		label = "OK"
+		mark, label = "✅", "done"
 	case "failed":
-		label = "FAILED"
+		mark, label = "❌", "failed"
 	case "aborted":
-		label = "ABORTED"
+		mark, label = "⏹", "stopped"
+	case "interrupted":
+		mark, label = "⚠", "interrupted"
 	}
 
-	text := fmt.Sprintf("[%s] Job #%d\n%s\nMessages transferred: %d", label, jobID, route, messages)
-	if summary != "" {
-		text += "\n\n" + strings.TrimSpace(summary)
+	lines := []string{fmt.Sprintf("%s Job #%d %s", mark, jobID, label)}
+	if job, err := b.DB.JobByID(jobID); err == nil {
+		lines = append(lines,
+			deref(job.SourceAccount),
+			"  → "+deref(job.DestAccount),
+			"")
+		// A run that copied nothing is a normal outcome — everything was already
+		// there — and saying "0 messages" states it more plainly than omitting it.
+		noun := "messages"
+		if job.MessagesTransferred == 1 {
+			noun = "message"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s, %s",
+			runner.Comma(int64(job.MessagesTransferred)), noun,
+			runner.HumanBytes(job.BytesTransferred)))
 	}
+	if summary = strings.TrimSpace(summary); summary != "" {
+		lines = append(lines, summary)
+	}
+	text := strings.Join(lines, "\n")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -374,11 +386,13 @@ func (b *Bot) OnProgress(jobID int64, p runner.Progress) {
 		return
 	}
 
-	text := fmt.Sprintf("[%d%%] Job #%d\n%s -> %s\n%s\n%d message(s), %s copied so far",
-		reached, jobID, deref(job.SourceAccount), deref(job.DestAccount),
-		p.Folder, p.Messages, humanBytes(p.Bytes))
+	// p.Folder already reads "7,200/14,400 messages" during the transfer, or
+	// "sizing 4/15" in the minutes before it starts.
+	text := fmt.Sprintf("⏳ Job #%d — %d%%\n%s\n  → %s\n\n%s · %s copied",
+		jobID, reached, deref(job.SourceAccount), deref(job.DestAccount),
+		p.Folder, runner.HumanBytes(p.Bytes))
 	if p.ETA != "" {
-		text += "\nAbout " + p.ETA + " left"
+		text += ", about " + p.ETA + " left"
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -389,19 +403,6 @@ func (b *Bot) OnProgress(jobID int64, p runner.Progress) {
 }
 
 // ------------------------------------------------------------------ helpers
-
-func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
-}
 
 func defaultBatchOptions() map[string]any {
 	return map[string]any{"dry_run": false, "ssl1": true, "ssl2": true, "automap": true, "usecache": true}

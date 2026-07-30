@@ -304,7 +304,7 @@ func scanLine(line string, p *Progress) bool {
 		if total > 0 {
 			pct := float64(total-left) / float64(total) * 100
 			p.Percent = float64(int(pct*10+0.5)) / 10
-			p.Folder = strconv.Itoa(total-left) + "/" + strconv.Itoa(total) + " messages"
+			p.Folder = Comma(int64(total-left)) + "/" + Comma(int64(total)) + " messages"
 			changed = true
 		}
 	}
@@ -388,8 +388,7 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 		r.OnProgress(job.ID, final)
 	}
 
-	summary := parseSummary(logText)
-	summary.Aborted = aborted
+	summary := parseSummary(logText, exitCode, aborted)
 	if summary.MessagesTransferred == 0 && final.Messages > 0 {
 		summary.MessagesTransferred = final.Messages
 		summary.BytesTransferred = final.Bytes
@@ -460,8 +459,97 @@ func (r *Runner) LogFor(jobID int64) string {
 	return ""
 }
 
-func parseSummary(text string) store.Summary {
+var (
+	foldersPat  = regexp.MustCompile(`Folders synced\s*:\s*(\d+)/(\d+)`)
+	skippedPat  = regexp.MustCompile(`Messages skipped\s*:\s*(\d+)`)
+	leftOverPat = regexp.MustCompile(`Messages found in host1 not in host2\s*:\s*(\d+)`)
+	durationPat = regexp.MustCompile(`Transfer time\s*:\s*([\d.]+) sec`)
+	// imapsync prefixes its own diagnostics this way. They are the only lines
+	// worth forwarding when a run goes wrong.
+	failurePat = regexp.MustCompile(`(?m)^(?:Failure|Error|Err)\b[^\n]*`)
+)
+
+// exitReason turns imapsync's exit code into something a person can act on.
+// The codes are documented in imapsync itself; the last two are the ones that
+// actually come up, because a wrong password is the usual reason a sync dies.
+func exitReason(code int) string {
+	switch code {
+	case 0:
+		return ""
+	case 6:
+		return "Stopped by a signal"
+	case 8:
+		return "Could not write its pid file"
+	case 10:
+		return "Could not connect to a server"
+	case 12:
+		return "TLS negotiation failed"
+	case 16:
+		return "Authentication failed"
+	case 21:
+		return "The subfolder given for the source does not exist"
+	case 101:
+		return "Could not connect to the source server"
+	case 102:
+		return "Could not connect to the destination server"
+	case 111, 112:
+		return "Finished, but with errors"
+	case 113:
+		return "The destination mailbox is over quota"
+	case 114:
+		return "The destination server refused a message"
+	case 115:
+		return "Could not read a message from the source"
+	case 116:
+		return "Could not create a folder on the destination"
+	case 117:
+		return "Could not open a folder"
+	case 118:
+		return "The transfer limit was exceeded"
+	case 119:
+		return "The destination server rejected a message as a virus"
+	case 161:
+		return "Wrong username or password for the source account"
+	case 162:
+		return "Wrong username or password for the destination account"
+	}
+	return fmt.Sprintf("imapsync exited with code %d", code)
+}
+
+// Comma groups thousands: 14400 reads as a serial number often enough to be
+// worth the twelve lines.
+func Comma(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if n < 0 {
+		return "-" + Comma(-n)
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
+// HumanBytes renders a byte count the way imapsync does, in binary units.
+func HumanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
+
+// parseSummary reads imapsync's statistics block. It used to take the last five
+// lines of the log instead, which are always the same housekeeping — the
+// homepage URL, the pid file being removed — and said nothing about the run.
+func parseSummary(text string, exitCode int, aborted bool) store.Summary {
 	var s store.Summary
+	s.Aborted = aborted
+
 	if m := transferPat.FindStringSubmatch(text); m != nil {
 		s.MessagesTransferred, _ = strconv.Atoi(m[1])
 	}
@@ -471,11 +559,52 @@ func parseSummary(text string) store.Summary {
 	if m := errorsPat.FindStringSubmatch(text); m != nil {
 		s.ErrorsCount, _ = strconv.Atoi(m[1])
 	}
-	lines := strings.Split(text, "\n")
-	if len(lines) > 5 {
-		lines = lines[len(lines)-5:]
+
+	var parts []string
+	if m := foldersPat.FindStringSubmatch(text); m != nil {
+		parts = append(parts, fmt.Sprintf("%s/%s folders", m[1], m[2]))
 	}
-	s.Text = strings.Join(lines, "\n")
+	if m := skippedPat.FindStringSubmatch(text); m != nil {
+		if n, _ := strconv.ParseInt(m[1], 10, 64); n > 0 {
+			parts = append(parts, Comma(n)+" already there")
+		}
+	}
+	if m := leftOverPat.FindStringSubmatch(text); m != nil {
+		if n, _ := strconv.ParseInt(m[1], 10, 64); n > 0 {
+			parts = append(parts, Comma(n)+" still only on the source")
+		}
+	}
+	if m := durationPat.FindStringSubmatch(text); m != nil {
+		if secs, err := strconv.ParseFloat(m[1], 64); err == nil && secs >= 1 {
+			d := time.Duration(secs * float64(time.Second)).Round(time.Second)
+			parts = append(parts, "took "+d.String())
+		}
+	}
+
+	var lines []string
+	switch {
+	case aborted:
+		lines = append(lines, "Stopped before it finished. Messages already copied stay copied.")
+	case exitCode != 0:
+		lines = append(lines, exitReason(exitCode))
+	}
+	if len(parts) > 0 {
+		lines = append(lines, strings.Join(parts, " · "))
+	}
+	if s.ErrorsCount > 0 {
+		lines = append(lines, fmt.Sprintf("%d error(s) reported", s.ErrorsCount))
+	}
+	// Only on a bad run: on a good one these do not exist, and quoting log
+	// lines at someone who asked for a result is noise.
+	if exitCode != 0 {
+		found := failurePat.FindAllString(text, -1)
+		if len(found) > 3 {
+			found = found[len(found)-3:]
+		}
+		lines = append(lines, found...)
+	}
+
+	s.Text = strings.TrimSpace(strings.Join(lines, "\n"))
 	return s
 }
 
