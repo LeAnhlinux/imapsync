@@ -305,3 +305,35 @@ func TestWebhookSubscription(t *testing.T) {
 		t.Error("* should match every event")
 	}
 }
+
+func TestUpdateJobCountsOnlyTouchesRunningJobs(t *testing.T) {
+	// History showed 0 messages and 0 bytes for a job's whole life because the
+	// counters were written only when the process exited.
+	db := open(t)
+	u := user(t, db, "a")
+	j := job(t, db, u.ID, "running", NowVN())
+
+	if err := db.UpdateJobCounts(j.ID, 120, 4096); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.JobByID(j.ID)
+	if got.MessagesTransferred != 120 || got.BytesTransferred != 4096 {
+		t.Errorf("live counts read back as %d/%d, want 120/4096",
+			got.MessagesTransferred, got.BytesTransferred)
+	}
+
+	// A finished job must be immune: the runner emits a final progress event
+	// around the same time the completion handler writes the real summary, and
+	// whichever lands second must not be allowed to overwrite the other.
+	if err := db.FinishJob(j.ID, "completed", 0, Summary{MessagesTransferred: 130, BytesTransferred: 5000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateJobCounts(j.ID, 999, 999); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = db.JobByID(j.ID)
+	if got.MessagesTransferred != 130 || got.BytesTransferred != 5000 {
+		t.Errorf("a late update rewrote a finished job: %d/%d",
+			got.MessagesTransferred, got.BytesTransferred)
+	}
+}

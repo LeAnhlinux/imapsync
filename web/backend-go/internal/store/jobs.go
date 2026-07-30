@@ -80,6 +80,19 @@ func (db *DB) FinishJob(id int64, status string, exitCode int, s Summary) error 
 	return err
 }
 
+// UpdateJobCounts records what a job has moved so far. Until this existed the
+// counters were written only by FinishJob, so a migration that ran for hours
+// showed 0 messages and 0 bytes in History for its entire life.
+//
+// The guard matters: it only ever advances a running job's counters, so a
+// straggling update cannot resurrect or rewrite a job that has already
+// finished, aborted, or been reconciled.
+func (db *DB) UpdateJobCounts(id int64, messages int, bytes int64) error {
+	_, err := db.Exec(`UPDATE sync_jobs SET messages_transferred=?, bytes_transferred=?
+		WHERE id=? AND status='running'`, messages, bytes, id)
+	return err
+}
+
 func (db *DB) MarkAborted(id int64) error {
 	_, err := db.Exec(`UPDATE sync_jobs SET status='aborted', finished_at=? WHERE id=?`,
 		NowVN().Format(TimeLayout), id)

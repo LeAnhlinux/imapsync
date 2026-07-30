@@ -26,12 +26,16 @@ type Event struct {
 	Folder   string  `json:"folder,omitempty"`
 	Status   string  `json:"status,omitempty"`
 	ExitCode int     `json:"exit_code,omitempty"`
+	Messages int     `json:"messages,omitempty"`
+	Bytes    int64   `json:"bytes,omitempty"`
 }
 
 type Progress struct {
-	Percent float64
-	Folder  string
-	ETA     string
+	Percent  float64
+	Folder   string
+	ETA      string
+	Messages int
+	Bytes    int64
 }
 
 const maxLogLines = 10000
@@ -48,6 +52,11 @@ type Job struct {
 	subscribers map[int]chan Event
 	nextSub     int
 	done        chan struct{}
+
+	// The log is appended as it arrives rather than written once at exit, so a
+	// running job has a readable log and a long run is not truncated to the last
+	// maxLogLines. lines stays as the tail kept for WebSocket replay.
+	logFile *os.File
 }
 
 func (j *Job) Progress() Progress {
@@ -91,9 +100,10 @@ func (j *Job) Replay() []Event {
 	for _, l := range j.lines {
 		out = append(out, Event{Type: "log", Data: l})
 	}
-	if j.progress.Percent > 0 {
+	if j.progress.Percent > 0 || j.progress.Messages > 0 || j.progress.Folder != "" {
 		out = append(out, Event{Type: "progress", Percent: j.progress.Percent,
-			Folder: j.progress.Folder, ETA: j.progress.ETA})
+			Folder: j.progress.Folder, ETA: j.progress.ETA,
+			Messages: j.progress.Messages, Bytes: j.progress.Bytes})
 	}
 	return out
 }
@@ -117,10 +127,11 @@ type Runner struct {
 	mu   sync.RWMutex
 	jobs map[int64]*Job
 
-	// OnProgress is called for every progress update. Listeners decide for
-	// themselves how often that is worth acting on — the runner does not want
-	// to know what a "milestone" means to each of them.
-	OnProgress func(jobID int64, percent float64, folder string)
+	// OnProgress is called at most once a second while a job runs, and once more
+	// when it ends. Listeners decide for themselves how often that is worth
+	// acting on — the runner does not want to know what a "milestone" means to
+	// each of them.
+	OnProgress func(jobID int64, p Progress)
 	// OnComplete records the outcome once the process exits.
 	OnComplete func(jobID int64, exitCode int, summary store.Summary)
 }
@@ -202,14 +213,29 @@ func (r *Runner) Start(jobID int64, p Params) (*Job, error) {
 	cmd.Stderr = cmd.Stdout
 
 	job := &Job{ID: jobID, cmd: cmd, subscribers: map[int]chan Event{}, done: make(chan struct{})}
+	if r.LogDir != "" {
+		// A job whose log cannot be opened still runs — losing the transcript is
+		// worse than nothing, but refusing to sync over it would be worse still.
+		f, err := os.OpenFile(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", jobID)),
+			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err == nil {
+			job.logFile = f
+		}
+	}
 	if len(rejected) > 0 {
-		job.lines = append(job.lines,
-			"Warning: ignored unsupported or unsafe options: "+strings.Join(rejected, ", "))
+		warning := "Warning: ignored unsupported or unsafe options: " + strings.Join(rejected, ", ")
+		job.lines = append(job.lines, warning)
+		if job.logFile != nil {
+			_, _ = job.logFile.WriteString(warning + "\n")
+		}
 	}
 
 	if err := cmd.Start(); err != nil {
 		os.Remove(pass1)
 		os.Remove(pass2)
+		if job.logFile != nil {
+			job.logFile.Close()
+		}
 		return nil, err
 	}
 
@@ -232,17 +258,73 @@ func (j *Job) PID() int {
 // runs one mailbox at a time.
 func (j *Job) Wait() { <-j.done }
 
+// What imapsync actually prints. Verified against a 9,802-line log from a real
+// run, not inferred: an earlier version of this file looked for
+// "Syncing folder [x] (n/m)", which appears nowhere in imapsync's output, so
+// progress sat at zero for every job ever run.
 var (
-	folderPat   = regexp.MustCompile(`Syncing folder \[.*?\] \((\d+)/(\d+)\)`)
-	etaPat      = regexp.MustCompile(`ETA:\s*(\S+)`)
+	// Appended to every ETA line and to the tail of every copy line:
+	//   ETA: Wednesday 29 July 2026-07-29 12:48:51 +0700 +07  9255 s  9175/18945 msgs left
+	// The pair is remaining/total, so what is done is total minus remaining.
+	msgsLeftPat = regexp.MustCompile(`(\d+)/(\d+) msgs left`)
+	etaSecsPat  = regexp.MustCompile(`ETA:.*?\s(\d+) s\s`)
+	// One line per message actually written, the braces holding its size:
+	//   msg INBOX/42 {1234}          copied to INBOX/57  0.50 msgs/s ...
+	copiedPat = regexp.MustCompile(`^msg .*\{(\d+)\}\s+copied to `)
+	// Sizing walks the folders before the first message moves, and on a large
+	// account that takes minutes. Without it the UI would show nothing at all
+	// for the part of the run users are most likely to be watching.
+	//   Host1 folder    4/15 [Deleted Items]   Size: 2239 Messages: 3 ...
+	sizingPat = regexp.MustCompile(`^Host1 folder\s+(\d+)/(\d+)\s+\[`)
+
 	transferPat = regexp.MustCompile(`Messages transferred\s*:\s*(\d+)`)
 	bytesPat    = regexp.MustCompile(`Total bytes transferred\s*:\s*(\d+)`)
 	errorsPat   = regexp.MustCompile(`Detected\s+(\d+)\s+errors`)
 )
 
+// scanLine folds one line of imapsync output into the running progress and
+// reports whether anything changed. Split out from the reader loop so it can be
+// tested against captured output without spawning a process.
+func scanLine(line string, p *Progress) bool {
+	changed := false
+
+	if m := copiedPat.FindStringSubmatch(line); m != nil {
+		n, _ := strconv.ParseInt(m[1], 10, 64)
+		p.Messages++
+		p.Bytes += n
+		changed = true
+	}
+	if m := sizingPat.FindStringSubmatch(line); m != nil {
+		p.Folder = "sizing " + m[1] + "/" + m[2]
+		changed = true
+	}
+	if m := msgsLeftPat.FindStringSubmatch(line); m != nil {
+		left, _ := strconv.Atoi(m[1])
+		total, _ := strconv.Atoi(m[2])
+		if total > 0 {
+			pct := float64(total-left) / float64(total) * 100
+			p.Percent = float64(int(pct*10+0.5)) / 10
+			p.Folder = strconv.Itoa(total-left) + "/" + strconv.Itoa(total) + " messages"
+			changed = true
+		}
+	}
+	if m := etaSecsPat.FindStringSubmatch(line); m != nil {
+		secs, _ := strconv.Atoi(m[1])
+		p.ETA = (time.Duration(secs) * time.Second).String()
+		changed = true
+	}
+	return changed
+}
+
 func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) }, passfiles []string) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	// A copy line per message means progress changes thousands of times. Both
+	// the DB write and the WebSocket push are throttled to something a human can
+	// read; the counters themselves stay exact.
+	const publishEvery = time.Second
+	var lastPublish time.Time
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -252,30 +334,25 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 		if len(job.lines) > maxLogLines {
 			job.lines = job.lines[len(job.lines)-maxLogLines:]
 		}
+		if job.logFile != nil {
+			_, _ = job.logFile.WriteString(line + "\n")
+		}
 		job.publish(Event{Type: "log", Data: line})
 
-		if m := folderPat.FindStringSubmatch(line); m != nil {
-			cur, _ := strconv.Atoi(m[1])
-			total, _ := strconv.Atoi(m[2])
-			percent := 0.0
-			if total > 0 {
-				percent = float64(cur) / float64(total) * 100
-			}
-			percent = float64(int(percent*10+0.5)) / 10
-			job.progress = Progress{Percent: percent, Folder: m[1] + "/" + m[2], ETA: job.progress.ETA}
-			job.publish(Event{Type: "progress", Percent: percent,
-				Folder: job.progress.Folder, ETA: job.progress.ETA})
-			p := job.progress
+		changed := scanLine(line, &job.progress)
+		p := job.progress
+		job.mu.Unlock()
+
+		if changed && time.Since(lastPublish) >= publishEvery {
+			lastPublish = time.Now()
+			job.mu.Lock()
+			job.publish(Event{Type: "progress", Percent: p.Percent, Folder: p.Folder,
+				ETA: p.ETA, Messages: p.Messages, Bytes: p.Bytes})
 			job.mu.Unlock()
 			if r.OnProgress != nil {
-				r.OnProgress(job.ID, p.Percent, p.Folder)
+				r.OnProgress(job.ID, p)
 			}
-			continue
 		}
-		if m := etaPat.FindStringSubmatch(line); m != nil {
-			job.progress.ETA = m[1]
-		}
-		job.mu.Unlock()
 	}
 
 	err := job.cmd.Wait()
@@ -297,14 +374,26 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 	job.mu.Lock()
 	logText := strings.Join(job.lines, "\n")
 	aborted := job.aborted
+	final := job.progress
+	if job.logFile != nil {
+		job.logFile.Close()
+		job.logFile = nil
+	}
 	job.mu.Unlock()
 
-	if r.LogDir != "" {
-		_ = os.WriteFile(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", job.ID)), []byte(logText), 0o600)
+	// The throttle can swallow the last second of counting, and an aborted job
+	// never reaches imapsync's summary block at all, so the tally observed line
+	// by line is the only record of what it managed to move.
+	if r.OnProgress != nil && final.Messages > 0 {
+		r.OnProgress(job.ID, final)
 	}
 
 	summary := parseSummary(logText)
 	summary.Aborted = aborted
+	if summary.MessagesTransferred == 0 && final.Messages > 0 {
+		summary.MessagesTransferred = final.Messages
+		summary.BytesTransferred = final.Bytes
+	}
 
 	status := "completed"
 	if aborted {
@@ -355,16 +444,20 @@ func (r *Runner) Abort(jobID int64) bool {
 	return true
 }
 
-// LogFor returns the live buffer for a running job, or the saved file.
+// LogFor returns a job's log, running or finished. The file is preferred over
+// the in-memory tail because the tail is capped and a real migration overruns
+// it — a 9,000-message run would otherwise lose its opening, which is where the
+// settings and folder mapping are recorded.
 func (r *Runner) LogFor(jobID int64) string {
+	if r.LogDir != "" {
+		if b, err := os.ReadFile(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", jobID))); err == nil {
+			return string(b)
+		}
+	}
 	if job := r.Get(jobID); job != nil {
 		return job.Log()
 	}
-	b, err := os.ReadFile(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", jobID)))
-	if err != nil {
-		return ""
-	}
-	return string(b)
+	return ""
 }
 
 func parseSummary(text string) store.Summary {

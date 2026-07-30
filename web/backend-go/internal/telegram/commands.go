@@ -348,15 +348,15 @@ func (b *Bot) NotifyJobFinished(jobID int64, status, summary string, userID int6
 	}
 }
 
-// OnProgress is registered with the runner. imapsync reports progress per
-// folder, many times a second on a small mailbox, so only crossing a step is
-// announced.
-func (b *Bot) OnProgress(jobID int64, percent float64, folder string) {
+// OnProgress is registered with the runner, which reports once a second while
+// a job runs. Only crossing a step is announced: nobody wants a message a
+// second.
+func (b *Bot) OnProgress(jobID int64, p runner.Progress) {
 	cfg := b.current()
 	if !cfg.usable() || !cfg.notifyOnProgress {
 		return
 	}
-	reached := int(percent) / cfg.progressStep * cfg.progressStep
+	reached := int(p.Percent) / cfg.progressStep * cfg.progressStep
 	if reached <= 0 || reached >= 100 {
 		return
 	}
@@ -374,8 +374,12 @@ func (b *Bot) OnProgress(jobID int64, percent float64, folder string) {
 		return
 	}
 
-	text := fmt.Sprintf("[%d%%] Job #%d\n%s -> %s\nFolder %s",
-		reached, jobID, deref(job.SourceAccount), deref(job.DestAccount), folder)
+	text := fmt.Sprintf("[%d%%] Job #%d\n%s -> %s\n%s\n%d message(s), %s copied so far",
+		reached, jobID, deref(job.SourceAccount), deref(job.DestAccount),
+		p.Folder, p.Messages, humanBytes(p.Bytes))
+	if p.ETA != "" {
+		text += "\nAbout " + p.ETA + " left"
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -385,6 +389,19 @@ func (b *Bot) OnProgress(jobID int64, percent float64, folder string) {
 }
 
 // ------------------------------------------------------------------ helpers
+
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
 
 func defaultBatchOptions() map[string]any {
 	return map[string]any{"dry_run": false, "ssl1": true, "ssl2": true, "automap": true, "usecache": true}

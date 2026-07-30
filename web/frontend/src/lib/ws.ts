@@ -8,11 +8,21 @@ export interface WsMessage {
   folder?: string
   status?: string
   exit_code?: number
+  messages?: number
+  bytes?: number
+}
+
+export interface JobProgress {
+  percent: number
+  eta: string
+  folder: string
+  messages: number
+  bytes: number
 }
 
 export function useJobWebSocket(jobId: number | null) {
   const [logs, setLogs] = useState<string[]>([])
-  const [progress, setProgress] = useState<{ percent: number; eta: string; folder: string } | null>(null)
+  const [progress, setProgress] = useState<JobProgress | null>(null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -30,7 +40,13 @@ export function useJobWebSocket(jobId: number | null) {
           setLogs((prev) => [...prev, msg.data || ''])
           break
         case 'progress':
-          setProgress({ percent: msg.percent || 0, eta: msg.eta || '', folder: msg.folder || '' })
+          setProgress({
+            percent: msg.percent || 0,
+            eta: msg.eta || '',
+            folder: msg.folder || '',
+            messages: msg.messages || 0,
+            bytes: msg.bytes || 0,
+          })
           break
         case 'status':
           setJobStatus(msg.status || null)

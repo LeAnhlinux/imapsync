@@ -178,8 +178,12 @@ function LiveLog({ jobId }: { jobId: number }) {
         <div className="mb-3">
           <Progress
             value={progress.percent}
-            label={`Folder ${progress.folder}${progress.eta ? ` · ETA ${progress.eta}` : ''}`}
+            label={`${progress.folder}${progress.eta ? ` · ${progress.eta} left` : ''}`}
           />
+          <p className="mt-1.5 text-xs tabular text-muted-foreground">
+            {progress.messages} message{progress.messages === 1 ? '' : 's'} ·{' '}
+            {formatBytes(progress.bytes)} copied
+          </p>
         </div>
       )}
 

@@ -65,7 +65,14 @@ func main() {
 	// is saved on the Settings page.
 	bot := telegram.New(db, sec, run, starter, batch)
 	completion.Notify = bot.NotifyJobFinished
-	run.OnProgress = bot.OnProgress
+	// Two listeners, one signal: History needs the counters in the database, the
+	// bot needs to decide whether a milestone has been crossed.
+	run.OnProgress = func(jobID int64, p runner.Progress) {
+		if err := db.UpdateJobCounts(jobID, p.Messages, p.Bytes); err != nil {
+			log.Printf("job %d: recording progress: %v", jobID, err)
+		}
+		bot.OnProgress(jobID, p)
+	}
 	bot.Start()
 	defer bot.Stop()
 

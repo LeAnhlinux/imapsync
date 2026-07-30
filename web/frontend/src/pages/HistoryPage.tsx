@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { History, Search, Trash2, X } from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
+import { useJobWebSocket } from '@/lib/ws'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { StatusBadge } from '@/components/ui/badge'
@@ -33,13 +34,82 @@ interface Job {
 
 const STATUSES = ['completed', 'failed', 'aborted', 'interrupted', 'running']
 
+// A finished job's log never changes, so it is fetched once. A running job's
+// does, and the fetch used to be the only thing that ever happened — the modal
+// showed whatever existed at the moment it opened and then sat there.
+function LogViewer({
+  id,
+  initial,
+  live,
+  onClose,
+}: {
+  id: number
+  initial: string
+  live: boolean
+  onClose: () => void
+}) {
+  const { logs, jobStatus } = useJobWebSocket(live ? id : null)
+  const boxRef = useRef<HTMLPreElement>(null)
+  const [follow, setFollow] = useState(true)
+
+  // The socket replays the log it has, so once it has said anything it is the
+  // more current of the two and the initial fetch would only duplicate it.
+  const text = logs.length > 0 ? logs.join('\n') : initial
+  const streaming = live && jobStatus === null
+
+  useEffect(() => {
+    if (follow && boxRef.current) {
+      boxRef.current.scrollTop = boxRef.current.scrollHeight
+    }
+  }, [text, follow])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button className="absolute inset-0 bg-black/60" onClick={onClose} aria-label="Close log" />
+      <div className="relative flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg border border-border bg-card shadow-xl">
+        <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold">Log for job #{id}</h2>
+          {streaming && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" aria-hidden />
+              Live
+            </span>
+          )}
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+            {streaming && (
+              <>
+                <input
+                  type="checkbox"
+                  checked={follow}
+                  onChange={(e) => setFollow(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                Follow
+              </>
+            )}
+          </label>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+        <pre
+          ref={boxRef}
+          className="flex-1 overflow-auto bg-subtle p-4 font-mono text-xs leading-relaxed"
+        >
+          {text || 'No log recorded for this job.'}
+        </pre>
+      </div>
+    </div>
+  )
+}
+
 export function HistoryPage() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
-  const [log, setLog] = useState<{ id: number; text: string } | null>(null)
+  const [log, setLog] = useState<{ id: number; text: string; live: boolean } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Job | null>(null)
   const [showPurge, setShowPurge] = useState(false)
   const [purgeDays, setPurgeDays] = useState(30)
@@ -58,9 +128,26 @@ export function HistoryPage() {
       .finally(() => setLoading(false))
   }, [page, status, query, reloadKey])
 
-  const viewLog = async (id: number) => {
+  // A migration runs for hours. Without this the row that matters most sits at
+  // 0 messages and a frozen clock until someone thinks to reload the page.
+  const anyRunning = jobs.some((j) => j.status === 'running')
+  useEffect(() => {
+    if (!anyRunning) return
+    const t = setInterval(() => {
+      const params: Record<string, unknown> = { page, per_page: 20 }
+      if (status) params.status = status
+      if (query) params.q = query
+      historyApi
+        .list(params)
+        .then((r) => setJobs(r.data))
+        .catch(() => {})
+    }, 5000)
+    return () => clearInterval(t)
+  }, [anyRunning, page, status, query])
+
+  const viewLog = async (id: number, live: boolean) => {
     const res = await syncApi.log(id)
-    setLog({ id, text: res.data.log })
+    setLog({ id, text: res.data.log, live })
   }
 
   const doDelete = async () => {
@@ -245,7 +332,11 @@ export function HistoryPage() {
                   </Td>
                   <Td align="right">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => viewLog(j.id)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => viewLog(j.id, j.status === 'running')}
+                      >
                         Log
                       </Button>
                       <Button
@@ -367,26 +458,7 @@ export function HistoryPage() {
         </div>
       )}
 
-      {log && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setLog(null)}
-            aria-label="Close log"
-          />
-          <div className="relative flex max-h-[85vh] w-full max-w-4xl flex-col rounded-lg border border-border bg-card shadow-xl">
-            <header className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Log for job #{log.id}</h2>
-              <Button variant="ghost" size="icon" onClick={() => setLog(null)} aria-label="Close">
-                <X className="h-4 w-4" />
-              </Button>
-            </header>
-            <pre className="flex-1 overflow-auto bg-subtle p-4 font-mono text-xs leading-relaxed">
-              {log.text || 'No log recorded for this job.'}
-            </pre>
-          </div>
-        </div>
-      )}
+      {log && <LogViewer id={log.id} initial={log.text} live={log.live} onClose={() => setLog(null)} />}
     </div>
   )
 }
