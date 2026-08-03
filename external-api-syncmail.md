@@ -310,10 +310,17 @@ Takes a **session JWT**, not an API key: it is what the browser has. The socket
 replays the log so far, then streams messages until the job ends.
 
 ```json
-{"type": "log",      "data": "Host1: folder [INBOX] ..."}
-{"type": "progress", "percent": 62.5, "folder": "5/8", "eta": "0:04:12"}
+{"type": "log",      "data": "Host1 folder    4/15 [Deleted Items]   Size: 2239 ..."}
+{"type": "progress", "percent": 62.5, "folder": "7,200/11,520 messages", "eta": "1h12m0s",
+ "messages": 7200, "bytes": 890123456}
 {"type": "status",   "status": "completed", "exit_code": 0}
 ```
+
+`progress` arrives at most once a second. `messages` and `bytes` are the running
+totals, counted from imapsync's own per-message output, and `folder` reads
+`sizing 4/15` during the several minutes before the first message moves — on a
+9,000-message account that phase alone takes four to five minutes, and nothing
+else is emitted while it runs.
 
 You may only open a socket for your own jobs; anyone else's is 403.
 
