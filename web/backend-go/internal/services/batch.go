@@ -182,13 +182,27 @@ func (b *Batch) CreateFromRows(userID int64, rows []Row, filename string, opts m
 	return b.DB.BatchByID(batch.ID, userID)
 }
 
-// Start runs the batch in the background, one mailbox at a time.
-func (b *Batch) Start(batchID, userID int64, data store.JSONMap) {
+// Start runs the batch in the background, one mailbox at a time. It reports
+// whether it started; a batch already running is not started again.
+//
+// The API checked the row's status and then called this, which is a race: two
+// near-simultaneous starts -- a double-clicked button, or the web UI and
+// /batchgo at once -- both passed the check, both spawned a goroutine over the
+// same mailbox list, and the second overwrote the first's cancel function. Stop
+// then reached only one of them while the other kept copying, which is exactly
+// what cancelling is supposed to prevent. Registering under the lock and
+// refusing a duplicate makes the check and the claim one step.
+func (b *Batch) Start(batchID, userID int64, data store.JSONMap) bool {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	b.mu.Lock()
 	if b.running == nil {
 		b.running = map[int64]context.CancelFunc{}
+	}
+	if _, already := b.running[batchID]; already {
+		b.mu.Unlock()
+		cancel()
+		return false
 	}
 	b.running[batchID] = cancel
 	b.mu.Unlock()
@@ -202,6 +216,7 @@ func (b *Batch) Start(batchID, userID int64, data store.JSONMap) {
 		}()
 		b.run(ctx, batchID, userID, data)
 	}()
+	return true
 }
 
 // Cancel stops a running batch after the mailbox in flight, and aborts that

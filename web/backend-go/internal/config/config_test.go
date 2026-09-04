@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,7 +43,7 @@ func TestLoadRejectsDefaultSecrets(t *testing.T) {
 func TestLoadCreatesDataDirs(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	t.Setenv("SECRET_KEY", "a-real-secret")
+	t.Setenv("SECRET_KEY", strings.Repeat("k", 32))
 	t.Setenv("IMAPSYNC_FERNET_KEY", "0XgJN2Yxp4KXExNTHA6m8nKFQ0sEe_2Qmsje0sYw4Ww=")
 	t.Setenv("DATA_DIR", filepath.Join(dir, "data"))
 
@@ -66,5 +67,23 @@ func TestStaticDirEmptyWhenMissing(t *testing.T) {
 	t.Setenv("STATIC_DIR", filepath.Join(dir, "nope"))
 	if got := (&Config{}).StaticDir(); got != "" {
 		t.Errorf("StaticDir = %q for a missing directory, want empty", got)
+	}
+}
+
+func TestLoadRejectsAShortSecretKey(t *testing.T) {
+	// The signing key. A short one is brute-forceable offline from any token a
+	// user holds, and a forged token reaches every account.
+	t.Setenv("IMAPSYNC_FERNET_KEY", "0XgJN2Yxp4KXExNTHA6m8nKFQ0sEe_2Qmsje0sYw4Ww=")
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	for _, short := range []string{"x", "hunter2", strings.Repeat("k", 31)} {
+		t.Setenv("SECRET_KEY", short)
+		if _, err := Load(); err == nil {
+			t.Errorf("a %d-character SECRET_KEY was accepted", len(short))
+		}
+	}
+	t.Setenv("SECRET_KEY", strings.Repeat("k", 32))
+	if _, err := Load(); err != nil {
+		t.Errorf("a 32-character key was refused: %v", err)
 	}
 }

@@ -19,15 +19,18 @@ import (
 
 // Event is one message pushed to WebSocket subscribers.
 type Event struct {
-	Type     string  `json:"type"` // log | progress | status
-	Data     string  `json:"data,omitempty"`
-	Percent  float64 `json:"percent,omitempty"`
-	ETA      string  `json:"eta,omitempty"`
-	Folder   string  `json:"folder,omitempty"`
-	Status   string  `json:"status,omitempty"`
-	ExitCode int     `json:"exit_code,omitempty"`
-	Messages int     `json:"messages,omitempty"`
-	Bytes    int64   `json:"bytes,omitempty"`
+	Type    string  `json:"type"` // log | progress | status
+	Data    string  `json:"data,omitempty"`
+	Percent float64 `json:"percent,omitempty"`
+	ETA     string  `json:"eta,omitempty"`
+	Folder  string  `json:"folder,omitempty"`
+	Status  string  `json:"status,omitempty"`
+	// Not omitempty: a successful job has exit_code 0, and omitting it there
+	// meant a client checking `msg.exit_code === 0` got undefined exactly when
+	// the sync had succeeded.
+	ExitCode int   `json:"exit_code"`
+	Messages int   `json:"messages,omitempty"`
+	Bytes    int64 `json:"bytes,omitempty"`
 }
 
 type Progress struct {
@@ -325,6 +328,43 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 	const publishEvery = time.Second
 	var lastPublish time.Time
 
+	// Listeners run on their own goroutine, latest-value-wins.
+	//
+	// OnProgress is wired to a SQLite write and to the Telegram bot, which does
+	// a synchronous HTTP POST per chat under a 30-second timeout. Calling that
+	// from here meant the reader was not draining stdout while the POST was in
+	// flight; the 64 KiB pipe filled and imapsync itself blocked. Telegram
+	// rate-limiting three chat ids could freeze a migration for a minute and a
+	// half. Subscribe's own comment states the rule this violated: nothing slow
+	// may stall the goroutine draining imapsync's stdout.
+	notifyCh := make(chan Progress, 1)
+	notifyDone := make(chan struct{})
+	go func() {
+		defer close(notifyDone)
+		for p := range notifyCh {
+			if r.OnProgress != nil {
+				r.OnProgress(job.ID, p)
+			}
+		}
+	}()
+	notify := func(p Progress) {
+		select {
+		case notifyCh <- p:
+		default:
+			// A listener is still busy with the previous one. Drop this update
+			// and replace the queued one, so it gets the newest state rather
+			// than a backlog of stale ones.
+			select {
+			case <-notifyCh:
+			default:
+			}
+			select {
+			case notifyCh <- p:
+			default:
+			}
+		}
+	}
+
 	for {
 		line, err := readLine(reader)
 		if line == "" && err != nil {
@@ -351,9 +391,7 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 			job.publish(Event{Type: "progress", Percent: p.Percent, Folder: p.Folder,
 				ETA: p.ETA, Messages: p.Messages, Bytes: p.Bytes})
 			job.mu.Unlock()
-			if r.OnProgress != nil {
-				r.OnProgress(job.ID, p)
-			}
+			notify(p)
 		}
 
 		if err != nil {
@@ -390,9 +428,23 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 	// The throttle can swallow the last second of counting, and an aborted job
 	// never reaches imapsync's summary block at all, so the tally observed line
 	// by line is the only record of what it managed to move.
-	if r.OnProgress != nil && final.Messages > 0 {
-		r.OnProgress(job.ID, final)
+	//
+	// This also goes to the WebSocket. Without it the last event a browser saw
+	// was up to a second stale, so a completing job's progress bar stopped at
+	// 99.4% and stayed there. The condition is "anything was observed", not
+	// "messages were copied": a dry run prints no copy lines at all.
+	if final.Percent > 0 || final.Messages > 0 || final.Folder != "" {
+		job.mu.Lock()
+		job.publish(Event{Type: "progress", Percent: final.Percent, Folder: final.Folder,
+			ETA: final.ETA, Messages: final.Messages, Bytes: final.Bytes})
+		job.mu.Unlock()
+		notify(final)
 	}
+
+	// No more progress after this point; wait for the listener to drain so the
+	// final counters are in the database before OnComplete writes the summary.
+	close(notifyCh)
+	<-notifyDone
 
 	summary := parseSummary(logText, exitCode, aborted)
 	if summary.MessagesTransferred == 0 && final.Messages > 0 {
@@ -614,12 +666,20 @@ func parseSummary(text string, exitCode int, aborted bool) store.Summary {
 	return s
 }
 
-func writePassfile(dir, prefix, password string) (string, error) {
+func writePassfile(dir, prefix, password string) (path string, err error) {
 	f, err := os.CreateTemp(dir, "imapsync_"+prefix+"_")
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
+	// The file exists from CreateTemp onward. Every early return below used to
+	// leave it behind without returning its name, so nothing could remove it --
+	// a file holding a cleartext mailbox password, kept forever.
+	defer func() {
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	}()
 	if err := f.Chmod(0o600); err != nil {
 		return "", err
 	}
@@ -685,4 +745,36 @@ func finishLine(s string, truncated bool) string {
 		s += " ...[line truncated]"
 	}
 	return s
+}
+
+// SweepTmp removes passfiles and pidfiles left by a previous run.
+//
+// A crash, an OOM kill, or a hang left both passfiles on disk holding cleartext
+// mailbox passwords -- while the same credentials sit fernet-encrypted in the
+// database two directories away. Nothing cleaned them up, because the registry
+// of live jobs is in memory and does not survive a restart. Call this at
+// startup, before any job can create new ones.
+func (r *Runner) SweepTmp() (int, error) {
+	if r.TmpDir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(r.TmpDir)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(name, "imapsync_p1_") ||
+			strings.HasPrefix(name, "imapsync_p2_") ||
+			(strings.HasPrefix(name, "imapsync_") && strings.HasSuffix(name, ".pid")) {
+			if os.Remove(filepath.Join(r.TmpDir, name)) == nil {
+				removed++
+			}
+		}
+	}
+	return removed, nil
 }

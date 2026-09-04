@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"log"
 	"sync"
 
@@ -75,6 +76,13 @@ func (rt *Retention) Sweep() {
 
 // SweepUser purges one account and returns how many jobs went.
 func (rt *Retention) SweepUser(userID int64, keepDays int) (int, error) {
+	// The API and the EnabledRetentions query both guard this, but "run now"
+	// reaches here with whatever is in the row: a 0 written directly to the
+	// database would delete every finished job in the history.
+	if keepDays < 1 {
+		return 0, fmt.Errorf("keep_days must be at least 1, got %d", keepDays)
+	}
+
 	cutoff := store.NaiveTime{Time: store.NowVN().AddDate(0, 0, -keepDays)}
 	ids, err := rt.DB.PurgeJobs(userID, cutoff)
 	if err != nil {

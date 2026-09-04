@@ -100,6 +100,12 @@ var schema = []string{
 		sync_params JSON
 	)`,
 	`CREATE INDEX IF NOT EXISTS ix_sync_jobs_status ON sync_jobs (status)`,
+	// Every history page, every X-Total-Count, the dashboard stats and the
+	// retention sweep all filter on user_id, and only ix_sync_jobs_status
+	// existed -- a low-cardinality index that helps none of them. They were
+	// full table scans of the one table that grows without bound, since
+	// retention defaults to off. The composite also serves the ORDER BY id DESC.
+	`CREATE INDEX IF NOT EXISTS ix_sync_jobs_user_id ON sync_jobs (user_id, id DESC)`,
 
 	`CREATE TABLE IF NOT EXISTS schedules (
 		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

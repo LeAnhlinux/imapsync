@@ -80,6 +80,10 @@ var (
 	// worth the bet.
 	regexCode = regexp.MustCompile(`\(\?\??\{`)
 	digits    = regexp.MustCompile(`^\d+$`)
+	// imapsync declares these as "=f", so a fraction is legal and sometimes
+	// required: --maxmessagespersecond 0.5 is the value Gmail actually wants,
+	// and requiring an integer rejected it.
+	decimal = regexp.MustCompile(`^\d+(\.\d+)?$`)
 )
 
 // SanitizeOptions filters user-supplied imapsync options, returning the
@@ -120,9 +124,15 @@ func SanitizeOptions(extra map[string]any) (map[string]any, []string) {
 			rejected = append(rejected, key)
 			continue
 		}
-		if kind == kindInt && !digits.MatchString(text) {
-			rejected = append(rejected, key)
-			continue
+		if kind == kindInt {
+			pat := digits
+			if floatOptions[key] {
+				pat = decimal
+			}
+			if !pat.MatchString(text) {
+				rejected = append(rejected, key)
+				continue
+			}
 		}
 		if kind == kindStr && regexCode.MatchString(text) {
 			rejected = append(rejected, key)
@@ -140,12 +150,16 @@ func truthy(v any) (on bool, valid bool) {
 	case bool:
 		return t, true
 	case string:
-		switch strings.ToLower(t) {
-		case "1", "true", "yes", "on", "":
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true", "yes", "on":
 			return true, true
 		case "0", "false", "no", "off":
 			return false, true
 		}
+		// An empty string is not "yes". It used to be, so an option arriving
+		// with no value -- which is how ParseOptionString represents a bare
+		// "--delete2" it could not pair -- silently enabled deletion on the
+		// destination. A flag must be asked for explicitly.
 	}
 	return false, false
 }
@@ -172,4 +186,12 @@ func scalarString(v any) (string, bool) {
 func ValidateCron(expr string) error {
 	_, err := cron.ParseStandard(expr)
 	return err
+}
+
+// floatOptions are the allowlisted numeric options imapsync declares as "=f".
+// Everything else numeric is an integer count or a port.
+var floatOptions = map[string]bool{
+	"maxage": true, "minage": true,
+	"maxmessagespersecond": true,
+	"timeout":              true, "timeout1": true, "timeout2": true,
 }

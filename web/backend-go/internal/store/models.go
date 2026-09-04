@@ -222,12 +222,6 @@ func (db *DB) ProfileByID(id, userID int64) (*Profile, error) {
 	return scanProfile(db.QueryRow(`SELECT `+profileCols+` FROM profiles WHERE id=? AND user_id=?`, id, userID))
 }
 
-// ProfileByIDAny skips the ownership check, for the scheduler which already
-// resolved the owner from the schedule row.
-func (db *DB) ProfileByIDAny(id int64) (*Profile, error) {
-	return scanProfile(db.QueryRow(`SELECT `+profileCols+` FROM profiles WHERE id=?`, id))
-}
-
 func (db *DB) CreateProfile(p *Profile) error {
 	now := NowVN().Format(TimeLayout)
 	res, err := db.Exec(`INSERT INTO profiles

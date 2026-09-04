@@ -498,3 +498,32 @@ func TestReconcileOrphanBatchesClearsHeldCredentials(t *testing.T) {
 		t.Errorf("a completed batch was rewritten to %q", other.Status)
 	}
 }
+
+func TestAnyStoredCiphertextFindsSomethingToCheck(t *testing.T) {
+	// Startup uses this to prove the configured Fernet key is the one the data
+	// was written with. On an empty database there is nothing to check and it
+	// must say so rather than fail.
+	db := open(t)
+	u := user(t, db, "a")
+
+	got, err := db.AnyStoredCiphertext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Errorf("an empty database offered %q to check against", got)
+	}
+
+	p := &Profile{UserID: u.ID, Name: "p", Host1: "h", User1: "u",
+		Password1Enc: "gAAAAABsomething", Host2: "h", User2: "u", Password2Enc: "gAAAAABelse"}
+	if err := db.CreateProfile(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.AnyStoredCiphertext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "gAAAAABsomething" {
+		t.Errorf("got %q, want the stored ciphertext", got)
+	}
+}

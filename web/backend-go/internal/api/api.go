@@ -74,7 +74,7 @@ type AdhocParams struct {
 
 type BatchService interface {
 	Create(userID int64, csvText, filename string, opts map[string]any) (*store.BatchRun, error)
-	Start(batchID, userID int64, data store.JSONMap)
+	Start(batchID, userID int64, data store.JSONMap) bool
 	// Cancel reports whether the batch was running.
 	Cancel(batchID int64) bool
 }

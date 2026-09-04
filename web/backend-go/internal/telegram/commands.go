@@ -300,7 +300,9 @@ func (b *Bot) cmdBatchGo(cfg config, batchID int64) string {
 	if err := b.DB.SetBatchStatus(batch.ID, "running"); err != nil {
 		return "Could not start it: " + err.Error()
 	}
-	b.Batch.Start(batch.ID, cfg.userID, batch.BatchData)
+	if !b.Batch.Start(batch.ID, cfg.userID, batch.BatchData) {
+		return fmt.Sprintf("Batch #%d is already running. Follow it with /jobs.", batch.ID)
+	}
 	return fmt.Sprintf("Batch #%d started: %d mailbox(es), one at a time.", batch.ID, batch.TotalRows)
 }
 
@@ -432,8 +434,24 @@ func popFlag(m map[string]any, key string) bool {
 		return false
 	}
 	delete(m, key)
-	b, _ := v.(bool)
-	return b
+	// A bool type assertion alone silently returned false for "--dry 1", which
+	// ParseOptionString stores as the string "1" -- so a user asking for a dry
+	// run got a real copy, and nothing said otherwise. A bare "--dry" arrives
+	// as true.
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "", "1", "true", "yes", "on":
+			return true
+		}
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	}
+	return false
 }
 
 func deref(s *string) string {

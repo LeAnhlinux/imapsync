@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/imapsync/web-backend/internal/api"
 	"github.com/imapsync/web-backend/internal/runner"
@@ -233,7 +234,7 @@ func (b *Bot) call(ctx context.Context, token, method string, params map[string]
 
 func (b *Bot) sendMessage(ctx context.Context, token string, chatID int64, text string) {
 	if len(text) > maxMessage {
-		text = text[:maxMessage] + "\n... (truncated)"
+		text = truncateRunes(text, maxMessage) + "\n... (truncated)"
 	}
 	if _, err := b.call(ctx, token, "sendMessage", map[string]any{
 		"chat_id": chatID, "text": text,
@@ -414,4 +415,18 @@ func allowed(ids []int64, id int64) bool {
 		}
 	}
 	return false
+}
+
+// truncateRunes cuts to a byte budget without splitting a character. Slicing
+// bytes broke multi-byte folder names -- Vietnamese ones especially -- in the
+// middle, which json.Marshal then replaced with U+FFFD.
+func truncateRunes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }

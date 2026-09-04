@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -196,5 +197,106 @@ echo "Detected 0 errors"
 		if strings.HasPrefix(e.Name(), "imapsync_p") {
 			t.Errorf("a cleartext passfile survived: %s", e.Name())
 		}
+	}
+}
+
+func TestASlowListenerDoesNotStallTheSync(t *testing.T) {
+	// OnProgress is wired to a SQLite write and to the Telegram bot, which POSTs
+	// synchronously. Calling it from the reader goroutine meant the 64 KiB pipe
+	// filled while the POST was in flight and imapsync itself blocked — so a
+	// rate-limited Telegram could freeze a migration. The listener now runs on
+	// its own goroutine with latest-value-wins.
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	if err := os.Mkdir(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enough copy lines to overflow a 64 KiB pipe several times over.
+	script := filepath.Join(dir, "chatty")
+	body := `#!/bin/sh
+i=1
+while [ $i -le 4000 ]; do
+  echo "msg Borrador/$i {1050}            copied to x/$i  0.5 msgs/s  1 KiB/s 1 KiB copied ETA: Thu  0 s  $((4000-i))/4000 msgs left"
+  i=$((i+1))
+done
+echo "Messages transferred                    : 4000"
+echo "Detected 0 errors"
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(script, dir, dir, logDir)
+	var calls int32
+	r.OnProgress = func(_ int64, _ Progress) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(2 * time.Second) // a listener that has stopped responding
+	}
+
+	job, err := r.Start(1, Params{Host1: "h1", User1: "u1", Password1: "p1",
+		Host2: "h2", User2: "u2", Password2: "p2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() { job.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(25 * time.Second):
+		t.Fatal("the sync did not finish: a slow progress listener stalled the reader")
+	}
+
+	// Every line must still have been read, and the listener must have been
+	// called only a handful of times rather than once per line.
+	full := r.LogFor(1)
+	if !strings.Contains(full, "Borrador/4000") || !strings.Contains(full, "Detected 0 errors") {
+		t.Error("output was lost while the listener was busy")
+	}
+	if n := atomic.LoadInt32(&calls); n > 10 {
+		t.Errorf("the listener was called %d times; updates should coalesce", n)
+	}
+}
+
+func TestSweepTmpRemovesOrphanedPassfiles(t *testing.T) {
+	// A crash or a hang left both passfiles on disk holding cleartext mailbox
+	// passwords, with nothing to clean them up: the registry of live jobs is in
+	// memory and does not survive a restart.
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "imapsync_cache")
+	if err := os.Mkdir(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"imapsync_p1_123456", "imapsync_p2_789012", "imapsync_7.pid", "something-else.txt",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := New("/bin/true", dir, dir, dir)
+	n, err := r.SweepTmp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 3 {
+		t.Errorf("removed %d files, want 3", n)
+	}
+	for _, gone := range []string{"imapsync_p1_123456", "imapsync_p2_789012", "imapsync_7.pid"} {
+		if _, err := os.Stat(filepath.Join(dir, gone)); err == nil {
+			t.Errorf("%s survived the sweep", gone)
+		}
+	}
+	// Anything else in the directory must be left alone — the cache lives here.
+	if _, err := os.Stat(filepath.Join(dir, "something-else.txt")); err != nil {
+		t.Error("the sweep removed an unrelated file")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Error("the sweep removed the cache directory")
 	}
 }

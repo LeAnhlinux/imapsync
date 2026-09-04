@@ -76,3 +76,45 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+func TestFractionalRatesAreAccepted(t *testing.T) {
+	// imapsync declares maxmessagespersecond as "=f". Requiring an integer
+	// rejected 0.5, which is the value Gmail's rate limit actually wants.
+	accepted, rejected := SanitizeOptions(map[string]any{
+		"maxmessagespersecond": "0.5",
+		"maxage":               "30.5",
+		"timeout":              "12.5",
+	})
+	if len(rejected) > 0 {
+		t.Errorf("a legal fractional value was rejected: %v", rejected)
+	}
+	if accepted["maxmessagespersecond"] != "0.5" {
+		t.Errorf("value came through as %v", accepted["maxmessagespersecond"])
+	}
+
+	// A port is not a float, and neither is a byte count.
+	_, rejected = SanitizeOptions(map[string]any{"port1": "993.5", "maxsize": "1.5"})
+	if len(rejected) != 2 {
+		t.Errorf("a fraction was accepted where only an integer makes sense: %v", rejected)
+	}
+}
+
+func TestAnEmptyValueDoesNotEnableAFlag(t *testing.T) {
+	// ParseOptionString yields an empty value for a trailing "--delete2" it
+	// could not pair. truthy("") returned true, so that silently switched on
+	// deletion at the destination — the one option in this list that destroys
+	// mail.
+	accepted, rejected := SanitizeOptions(map[string]any{"delete2": "", "expunge2": ""})
+	if len(accepted) != 0 {
+		t.Errorf("an empty value switched a flag on: %v", accepted)
+	}
+	if len(rejected) != 2 {
+		t.Errorf("the caller was not told the values were unusable: %v", rejected)
+	}
+
+	// Asking for it properly still works.
+	accepted, _ = SanitizeOptions(map[string]any{"delete2": true, "expunge2": "yes"})
+	if accepted["delete2"] != true || accepted["expunge2"] != true {
+		t.Errorf("an explicit request was dropped: %v", accepted)
+	}
+}

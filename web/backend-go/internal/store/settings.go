@@ -164,23 +164,28 @@ func (db *DB) NotificationSettings(userID int64) (*NotificationSettings, error) 
 	return &n, nil
 }
 
+// SaveNotificationSettings writes the row, creating it if it is not there.
+//
+// It used to read, then branch, then insert or update -- so two concurrent
+// first-time saves both saw ErrNotFound, both inserted, and one hit the UNIQUE
+// constraint on user_id and surfaced as a 500. One statement, the same shape
+// SaveRetention already uses.
 func (db *DB) SaveNotificationSettings(n *NotificationSettings) error {
-	existing, err := db.NotificationSettings(n.UserID)
-	if errors.Is(err, ErrNotFound) {
-		_, err := db.Exec(`INSERT INTO notification_settings
-			(user_id,smtp_host,smtp_port,smtp_user,smtp_password_enc,from_email,to_email,notify_on_success,notify_on_failure)
-			VALUES (?,?,?,?,?,?,?,?,?)`,
-			n.UserID, n.SMTPHost, n.SMTPPort, n.SMTPUser, n.SMTPPasswordEnc,
-			n.FromEmail, n.ToEmail, n.NotifyOnSuccess, n.NotifyOnFailure)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE notification_settings SET smtp_host=?,smtp_port=?,smtp_user=?,
-		smtp_password_enc=?,from_email=?,to_email=?,notify_on_success=?,notify_on_failure=? WHERE id=?`,
-		n.SMTPHost, n.SMTPPort, n.SMTPUser, n.SMTPPasswordEnc,
-		n.FromEmail, n.ToEmail, n.NotifyOnSuccess, n.NotifyOnFailure, existing.ID)
+	_, err := db.Exec(`INSERT INTO notification_settings
+		(user_id,smtp_host,smtp_port,smtp_user,smtp_password_enc,from_email,to_email,
+		 notify_on_success,notify_on_failure)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			smtp_host=excluded.smtp_host,
+			smtp_port=excluded.smtp_port,
+			smtp_user=excluded.smtp_user,
+			smtp_password_enc=excluded.smtp_password_enc,
+			from_email=excluded.from_email,
+			to_email=excluded.to_email,
+			notify_on_success=excluded.notify_on_success,
+			notify_on_failure=excluded.notify_on_failure`,
+		n.UserID, n.SMTPHost, n.SMTPPort, n.SMTPUser, n.SMTPPasswordEnc,
+		n.FromEmail, n.ToEmail, n.NotifyOnSuccess, n.NotifyOnFailure)
 	return err
 }
 
@@ -317,4 +322,26 @@ func (db *DB) ReconcileOrphanBatches() (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// AnyStoredCiphertext returns one encrypted value from the database, or "" if
+// nothing has been stored yet. It exists so startup can prove the configured
+// Fernet key is the one this data was written with.
+func (db *DB) AnyStoredCiphertext() (string, error) {
+	for _, q := range []string{
+		`SELECT password1_enc FROM profiles WHERE password1_enc IS NOT NULL AND password1_enc<>'' LIMIT 1`,
+		`SELECT smtp_password_enc FROM notification_settings WHERE smtp_password_enc IS NOT NULL AND smtp_password_enc<>'' LIMIT 1`,
+		`SELECT bot_token_enc FROM telegram_settings WHERE bot_token_enc IS NOT NULL AND bot_token_enc<>'' LIMIT 1`,
+	} {
+		var v string
+		switch err := db.QueryRow(q).Scan(&v); {
+		case err == nil && v != "":
+			return v, nil
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			return "", err
+		}
+	}
+	return "", nil
 }

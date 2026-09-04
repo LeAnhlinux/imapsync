@@ -140,8 +140,16 @@ func historyWhere(f HistoryFilter) (string, []any) {
 		args = append(args, f.Status)
 	}
 	if f.Query != "" {
-		where = append(where, "(COALESCE(summary,'') LIKE ? OR COALESCE(source_account,'') LIKE ? OR COALESCE(dest_account,'') LIKE ?)")
-		like := "%" + f.Query + "%"
+		// Escape the LIKE metacharacters. Without this a search for "_" matched
+		// every row and a search for "%" matched everything -- not a security
+		// problem (the query is still parameterised and still scoped to the
+		// user) but wrong results for anyone whose account name contains an
+		// underscore, which is common.
+		where = append(where,
+			`(COALESCE(summary,'') LIKE ? ESCAPE '\' `+
+				`OR COALESCE(source_account,'') LIKE ? ESCAPE '\' `+
+				`OR COALESCE(dest_account,'') LIKE ? ESCAPE '\')`)
+		like := "%" + escapeLike(f.Query) + "%"
 		args = append(args, like, like, like)
 	}
 	return strings.Join(where, " AND "), args
@@ -152,8 +160,14 @@ func (db *DB) History(f HistoryFilter) ([]*SyncJob, error) {
 	if f.Page < 1 {
 		f.Page = 1
 	}
-	if f.PerPage < 1 || f.PerPage > 100 {
+	// Clamp to the ceiling rather than falling back to the default: a caller
+	// asking for 200 got 20 rows while X-Total-Count reported the full total,
+	// so the client computed the wrong number of pages.
+	if f.PerPage < 1 {
 		f.PerPage = 20
+	}
+	if f.PerPage > 100 {
+		f.PerPage = 100
 	}
 	args = append(args, f.PerPage, (f.Page-1)*f.PerPage)
 
@@ -288,4 +302,11 @@ func (db *DB) PurgeJobs(userID int64, before NaiveTime) ([]int64, error) {
 		return nil, err
 	}
 	return ids, nil
+}
+
+// escapeLike neutralises the wildcards in a user's search term. The backslash
+// is declared as the escape character by every LIKE that uses this.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }

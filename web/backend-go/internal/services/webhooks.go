@@ -7,10 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -156,7 +158,10 @@ func (wh *Webhooks) deliver(hookID int64, url, secret, event string, body []byte
 			return
 		}
 		if err != nil {
-			log.Printf("webhooks: hook %d attempt %d: %v", hookID, attempt, err)
+			// Not %v on the error: a *url.Error carries the whole URL, and a
+			// Slack- or Discord-style webhook keeps its secret in the path. The
+			// hook id is enough to find the row.
+			log.Printf("webhooks: hook %d attempt %d: %v", hookID, attempt, bareError(err))
 		}
 		if attempt < 3 {
 			time.Sleep(backoff)
@@ -296,4 +301,13 @@ func isPublicIP(ip net.IP) bool {
 		}
 	}
 	return true
+}
+
+// bareError strips the URL that net/http wraps around a transport failure.
+func bareError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err
+	}
+	return err
 }

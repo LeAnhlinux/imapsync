@@ -94,7 +94,10 @@ func (s *Server) batchStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.Batch.Start(batch.ID, user.ID, batch.BatchData)
+	if !s.Batch.Start(batch.ID, user.ID, batch.BatchData) {
+		writeError(w, http.StatusConflict, "That batch is already running")
+		return
+	}
 
 	batch, _ = s.DB.BatchByID(id, user.ID)
 	writeJSON(w, http.StatusOK, batch)

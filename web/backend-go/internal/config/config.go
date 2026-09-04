@@ -43,8 +43,16 @@ func Load() (*Config, error) {
 		AccessTokenTTL: time.Duration(envInt("ACCESS_TOKEN_EXPIRE_MINUTES", 60*24)) * time.Minute,
 	}
 
+	// 32 bytes, not just "not empty". This is the HS256 signing key: a short
+	// one is brute-forceable offline from any token a user holds, and forging
+	// a token is full access to every account's profiles and job logs.
+	const minSecretKey = 32
 	if c.SecretKey == "" || c.SecretKey == "change-me-in-production" {
 		return nil, fmt.Errorf("SECRET_KEY is unset or still the default. Generate one with: openssl rand -hex 32")
+	}
+	if len(c.SecretKey) < minSecretKey {
+		return nil, fmt.Errorf("SECRET_KEY is only %d characters; it signs session tokens and needs at least %d. Generate one with: openssl rand -hex 32",
+			len(c.SecretKey), minSecretKey)
 	}
 	if c.FernetKey == "" || c.FernetKey == "change-me-in-production" {
 		return nil, fmt.Errorf("IMAPSYNC_FERNET_KEY is unset or still the default. Generate one with: " +

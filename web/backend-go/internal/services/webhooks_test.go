@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -84,5 +86,26 @@ func TestSchedulesFireInTheZoneTimestampsUse(t *testing.T) {
 	}
 	if d := next.Sub(from); d != 2*time.Hour {
 		t.Errorf("that is %v away, want 2h", d)
+	}
+}
+
+func TestDeliveryErrorsDoNotCarryTheURL(t *testing.T) {
+	// A Slack- or Discord-style webhook keeps its secret in the path, and the
+	// log is usually more widely readable than the database column it came from.
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "https://hooks.example.com/services/T000/B000/XXXXsecretXXXX",
+		Err: errors.New("connection refused"),
+	}
+	got := bareError(wrapped).Error()
+	if strings.Contains(got, "secret") || strings.Contains(got, "hooks.example.com") {
+		t.Errorf("the URL survived into the log line: %q", got)
+	}
+	if got != "connection refused" {
+		t.Errorf("got %q, want the underlying cause", got)
+	}
+	// A plain error is passed through unchanged.
+	if bareError(errors.New("plain")).Error() != "plain" {
+		t.Error("a non-url error was altered")
 	}
 }

@@ -37,6 +37,24 @@ func main() {
 	}
 	defer db.Close()
 
+	// Prove the configured Fernet key is the one this database was written
+	// with, before anything can encrypt under a different one. A key that
+	// merely decodes was accepted, so restoring the wrong .env started cleanly:
+	// every sync then failed at decrypt, and any profile edited afterwards was
+	// re-encrypted under the new key -- leaving a database that no single key
+	// can fully read, which no later fix recovers.
+	if ct, err := db.AnyStoredCiphertext(); err != nil {
+		log.Fatalf("checking the encryption key: %v", err)
+	} else if ct != "" {
+		if _, err := sec.Decrypt(ct); err != nil {
+			log.Fatalf("IMAPSYNC_FERNET_KEY does not match the data in %s: "+
+				"stored passwords cannot be decrypted with it. Restore the key this "+
+				"database was created with; starting with the wrong one would "+
+				"re-encrypt edited rows under it and make the mismatch permanent.",
+				cfg.DBPath())
+		}
+	}
+
 	if n, err := db.ReconcileOrphans(); err != nil {
 		log.Printf("reconcile orphan jobs: %v", err)
 	} else if n > 0 {
@@ -50,6 +68,14 @@ func main() {
 	}
 
 	run := runner.New(cfg.ImapsyncPath, cfg.TmpDir(), cfg.CacheDir(), cfg.LogDir)
+	// Passfiles hold cleartext mailbox passwords and only exist for the length
+	// of a run. Any still here belong to a run that did not end cleanly.
+	if n, err := run.SweepTmp(); err != nil {
+		log.Printf("sweeping the temp directory: %v", err)
+	} else if n > 0 {
+		log.Printf("removed %d leftover passfile(s)/pidfile(s) from an earlier run", n)
+	}
+
 	starter := &services.Starter{DB: db, Sec: sec, Runner: run}
 	mailer := &services.Mailer{DB: db, Sec: sec}
 	completion := &services.Completion{DB: db, Sec: sec, Mailer: mailer}

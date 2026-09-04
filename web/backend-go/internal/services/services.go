@@ -3,10 +3,14 @@
 package services
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/robfig/cron/v3"
 
@@ -125,7 +129,9 @@ func (c *Completion) Finish(jobID int64, exitCode int, s store.Summary) {
 	}
 
 	if status != "aborted" {
-		c.Mailer.NotifyJob(job.UserID, jobID, status, s.Text)
+		// On its own goroutine: even with a deadline, a slow SMTP server should
+		// not delay the Telegram message and the webhooks below it.
+		go c.Mailer.NotifyJob(job.UserID, jobID, status, s.Text)
 	}
 	if c.Notify != nil {
 		c.Notify(jobID, status, s.Text, job.UserID)
@@ -188,7 +194,8 @@ func (m *Mailer) send(n *store.NotificationSettings, password, subject, body str
 		from = *n.SMTPUser
 	}
 
-	addr := fmt.Sprintf("%s:%d", *n.SMTPHost, n.SMTPPort)
+	// JoinHostPort, not Sprintf: an IPv6 SMTP host needs brackets.
+	addr := net.JoinHostPort(*n.SMTPHost, strconv.Itoa(n.SMTPPort))
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n\r\n%s\r\n",
 		from, *n.ToEmail, subject, body)
 
@@ -196,9 +203,58 @@ func (m *Mailer) send(n *store.NotificationSettings, password, subject, body str
 	if n.SMTPUser != nil && *n.SMTPUser != "" {
 		auth = smtp.PlainAuth("", *n.SMTPUser, password, *n.SMTPHost)
 	}
-	// smtp.SendMail negotiates STARTTLS when the server offers it, matching
-	// what the Python side asked for explicitly.
-	return smtp.SendMail(addr, auth, from, []string{*n.ToEmail}, []byte(msg))
+	// smtp.SendMail dials with no deadline, so a host that accepts the TCP
+	// connection and then says nothing -- a firewalled address, a wrong port --
+	// hung this goroutine forever. It is called synchronously from the job
+	// completion path, so that also meant no Telegram message and no webhook
+	// for that job, and one leaked goroutine per job after it.
+	conn, err := net.DialTimeout("tcp", addr, smtpTimeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		return err
+	}
+
+	c, err := smtp.NewClient(conn, *n.SMTPHost)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	// STARTTLS when the server offers it, matching what the Python side asked
+	// for explicitly.
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: *n.SMTPHost}); err != nil {
+			return err
+		}
+	}
+	if auth != nil {
+		if ok, _ := c.Extension("AUTH"); ok {
+			if err := c.Auth(auth); err != nil {
+				return err
+			}
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	if err := c.Rcpt(*n.ToEmail); err != nil {
+		return err
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte(msg)); err != nil {
+		w.Close()
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }
 
 // Scheduler runs saved cron schedules.
@@ -228,7 +284,15 @@ func (s *Scheduler) Reload() {
 	// cron.New() defaults to time.Local, and the unit sets no TZ — so on a UTC
 	// host a user's "0 2 * * *" fired at 09:00 Vietnam time, in the middle of
 	// the working day, against production mail servers.
-	s.cron = cron.New(cron.WithLocation(store.VN))
+	// SkipIfStillRunning: cron does not skip a tick because the previous one is
+	// still going, and this launches a mailbox sync. A profile on "*/30 * * * *"
+	// whose sync takes two hours accumulated four concurrent imapsync processes
+	// against the same mailbox pair -- connection limits on both servers and
+	// cache contention, for no gain.
+	s.cron = cron.New(
+		cron.WithLocation(store.VN),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DiscardLogger)),
+	)
 
 	schedules, err := s.DB.ActiveSchedules()
 	if err != nil {
@@ -272,3 +336,7 @@ var (
 	_ api.Mailer      = (*Mailer)(nil)
 	_ api.CronService = (*Scheduler)(nil)
 )
+
+// smtpTimeout bounds every stage of a mail delivery. A notification is not
+// worth holding a goroutine open for.
+const smtpTimeout = 20 * time.Second
