@@ -43,14 +43,26 @@ func ParseCSV(text string) ([]Row, error) {
 	}
 
 	var rows []Row
-	for _, fields := range records {
+	var skipped []string
+	for n, fields := range records {
+		lineNo := n + 1
 		if len(fields) == 0 || strings.HasPrefix(strings.TrimSpace(fields[0]), "#") {
 			continue
 		}
-		for i := range fields {
-			fields[i] = strings.TrimSpace(fields[i])
+		// Trim the fields where surrounding whitespace is certainly an accident,
+		// and leave the passwords alone. A password may legitimately begin or
+		// end with a space, and trimming one produces an authentication failure
+		// that looks like the server rejecting a correct password.
+		for _, i := range []int{0, 1, 3, 4} {
+			if i < len(fields) {
+				fields[i] = strings.TrimSpace(fields[i])
+			}
+		}
+		if len(fields) == 1 && fields[0] == "" {
+			continue // a blank line
 		}
 		if len(fields) < 6 {
+			skipped = append(skipped, fmt.Sprintf("line %d has %d field(s), not 6", lineNo, len(fields)))
 			continue
 		}
 		r := Row{
@@ -59,12 +71,22 @@ func ParseCSV(text string) ([]Row, error) {
 		}
 		if r.Host1 == "" || r.User1 == "" || r.Password1 == "" ||
 			r.Host2 == "" || r.User2 == "" || r.Password2 == "" {
+			skipped = append(skipped, fmt.Sprintf("line %d has an empty field", lineNo))
 			continue
 		}
-		if len(fields) > 6 && fields[6] != "" {
-			r.ExtraOptions = ParseOptionString(fields[6])
+		if len(fields) > 6 && strings.TrimSpace(fields[6]) != "" {
+			r.ExtraOptions = ParseOptionString(strings.TrimSpace(fields[6]))
 		}
 		rows = append(rows, r)
+	}
+
+	// Refuse rather than migrate a subset. Dropping rows quietly means the
+	// mailboxes on those lines are never copied and nobody is told which.
+	if len(skipped) > 0 {
+		if len(skipped) > 5 {
+			skipped = append(skipped[:5], fmt.Sprintf("and %d more", len(skipped)-5))
+		}
+		return nil, fmt.Errorf("could not read %s", strings.Join(skipped, "; "))
 	}
 	return rows, nil
 }

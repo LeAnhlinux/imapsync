@@ -10,7 +10,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/imapsync/web-backend/internal/runner"
 	"github.com/imapsync/web-backend/internal/store"
 )
 
@@ -42,12 +41,11 @@ func (s *Server) startSync(w http.ResponseWriter, r *http.Request) {
 		// extra_options used to be dropped on this branch — accepted by the API,
 		// echoed back on the review screen, and never applied. Validate it the
 		// same way the ad-hoc branch does, then let it override the profile.
-		if _, rejected := runner.SanitizeOptions(b.ExtraOptions); len(rejected) > 0 {
-			writeError(w, http.StatusBadRequest,
-				"Unsupported or unsafe imapsync options: "+strings.Join(rejected, ", "))
+		extra, ok := validateOptions(w, b.ExtraOptions)
+		if !ok {
 			return
 		}
-		jobID, err = s.Starter.StartProfile(user.ID, *b.ProfileID, b.Folders, b.DryRun, b.ExtraOptions)
+		jobID, err = s.Starter.StartProfile(user.ID, *b.ProfileID, b.Folders, b.DryRun, extra)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "Profile not found")
 			return
