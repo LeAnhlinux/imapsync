@@ -57,3 +57,15 @@ func TestClientIPHandlesIPv6(t *testing.T) {
 		}
 	}
 }
+
+func TestCSVUploadLimitMatchesTheProxy(t *testing.T) {
+	// nginx allows 20M so a 16 MiB body plus multipart overhead fits; the
+	// handler must refuse anything past its own limit rather than truncate.
+	// If these ever drift apart again, a large batch loses mailboxes quietly.
+	if maxCSVUpload != 16<<20 {
+		t.Errorf("maxCSVUpload is %d; the nginx client_max_body_size comment says 16 MiB", maxCSVUpload)
+	}
+	if maxJSONBody >= maxCSVUpload {
+		t.Error("the JSON body cap should be well under the CSV cap")
+	}
+}

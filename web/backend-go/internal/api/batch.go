@@ -5,8 +5,12 @@ import (
 	"net/http"
 )
 
+// maxCSVUpload bounds a batch CSV. Keep client_max_body_size in the nginx
+// config in step with it.
+const maxCSVUpload = 16 << 20 // 16 MiB
+
 func (s *Server) batchUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(16 << 20); err != nil {
+	if err := r.ParseMultipartForm(maxCSVUpload); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid upload")
 		return
 	}
@@ -17,9 +21,18 @@ func (s *Server) batchUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	content, err := io.ReadAll(io.LimitReader(file, 16<<20))
+	// Read one byte past the limit so an oversized file can be refused rather
+	// than truncated. It used to be cut silently at 16 MiB: the upload returned
+	// 201 with a row count covering only the part that fit, and the mailboxes
+	// past the cut were never migrated and never mentioned.
+	content, err := io.ReadAll(io.LimitReader(file, maxCSVUpload+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(content) > maxCSVUpload {
+		writeError(w, http.StatusRequestEntityTooLarge,
+			"That CSV is larger than 16 MiB. Split it into several batches.")
 		return
 	}
 	name := header.Filename

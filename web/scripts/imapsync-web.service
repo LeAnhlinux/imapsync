@@ -1,21 +1,54 @@
 [Unit]
 Description=imapsync Web UI
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=imapsync
+Group=imapsync
 WorkingDirectory=__INSTALL_DIR__
 EnvironmentFile=__INSTALL_DIR__/.env
 ExecStart=__INSTALL_DIR__/imapsync-web
 Restart=always
 RestartSec=5
 
-# The binary is static and only needs its own data directory.
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
+# A migration can be hours long and imapsync is restart-safe, but SIGTERM
+# reaches the whole cgroup, so a stop kills any sync in flight. Bound the wait
+# deliberately rather than inheriting the 90s default.
+TimeoutStopSec=30
+
+# Sandboxing.
+#
+# ProtectSystem=full only makes /usr, /boot, /efi and /etc read-only. The
+# install lives in /opt, which full does not touch -- so the whole tree was
+# already writable and ReadWritePaths granted nothing. The service could
+# therefore overwrite its own binary, which Restart=always would then execute,
+# and read .env, which holds the key that decrypts every stored IMAP password.
+# strict makes the entire filesystem read-only and ReadWritePaths becomes the
+# only exception, which is what was meant. deploy.sh keeps the binaries, the
+# static files and .env owned by root to match.
+ProtectSystem=strict
 ReadWritePaths=__INSTALL_DIR__/data
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+UMask=0077
+
+# It spawns perl and talks to IMAP servers; it needs nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
 
 [Install]
 WantedBy=multi-user.target

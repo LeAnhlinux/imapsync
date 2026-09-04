@@ -1,10 +1,23 @@
+# WebSocket upgrades need Connection: upgrade, ordinary requests need
+# Connection: close. Sending "upgrade" unconditionally, as this did, is wrong
+# per RFC 9110 on every non-upgrade request and prevents upstream keepalive.
+# This map belongs at http{} scope; nginx accepts it here in a conf.d-style
+# include on Debian, but if your layout differs, move it to nginx.conf.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 80;
+    listen [::]:80;
     server_name __DOMAIN__;
 
     # Frontend static files
     root __INSTALL_DIR__/static;
     index index.html;
+
+    server_tokens off;
 
     # API + WebSocket proxy
     location /api/ {
@@ -14,11 +27,14 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # WebSocket support
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
+
+        # A WebSocket follows a sync for hours, and /api/folders/browse takes
+        # four to five minutes on a large Gmail account.
         proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
     }
 
     # SPA fallback
@@ -31,13 +47,21 @@ server {
     # over plain HTTP anyway.
     #
     # This site takes mailbox passwords, and without HSTS the first visit to
-    # a bare hostname still travels over HTTP before the 301. "always" so it
-    # is sent on error responses too.
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
+    # a bare hostname still travels over HTTP before the 301. "always" on all
+    # of them so they are sent on error responses too, not just on 2xx.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer always;
 
-    # Upload limit for batch CSV
-    client_max_body_size 50M;
+    # The frontend loads nothing from anywhere else: no CDN, no third-party
+    # script, no external font. Saying so limits what an injected script could
+    # do with a session token, which lives in localStorage.
+    add_header Content-Security-Policy
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
+    # Batch CSV upload. Keep this in step with maxCSVUpload in the backend:
+    # nginx used to allow 50M while the reader truncated at 16MiB without
+    # saying so, which silently dropped mailboxes from a large batch.
+    client_max_body_size 20M;
 }

@@ -2,6 +2,8 @@ module github.com/imapsync/web-backend
 
 go 1.25.0
 
+toolchain go1.25.13
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/fernet/fernet-go v0.0.0-20240119011108-303da6aec611

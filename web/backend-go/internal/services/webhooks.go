@@ -2,13 +2,16 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/imapsync/web-backend/internal/security"
@@ -27,7 +30,30 @@ type Webhooks struct {
 }
 
 func NewWebhooks(db *store.DB, sec *security.Manager) *Webhooks {
-	return &Webhooks{DB: db, Sec: sec, client: &http.Client{Timeout: 10 * time.Second}}
+	return &Webhooks{DB: db, Sec: sec, client: &http.Client{
+		Timeout: 10 * time.Second,
+		// The destination is user-supplied, and this process sits on the same
+		// host as the database and the key that decrypts every stored mailbox
+		// password. Without a check, a webhook pointed at 127.0.0.1 or at
+		// 169.254.169.254 turns "test this hook" into a port scanner and a
+		// metadata-service fetcher, run from inside the trust boundary.
+		//
+		// Checking the address at dial time, rather than the hostname up front,
+		// is what closes DNS rebinding and redirect chains: every connection
+		// this client makes -- original or redirected -- passes through here.
+		Transport: &http.Transport{
+			DialContext: dialPublicOnly,
+			// Redirects to a private address are refused by the dialer above,
+			// but cap the chain anyway.
+			MaxIdleConnsPerHost: 2,
+		},
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}}
 }
 
 // Payload is the JSON body of a delivery.
@@ -212,4 +238,62 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+var allowPrivateWebhooks = os.Getenv("WEBHOOKS_ALLOW_PRIVATE") == "true"
+
+// dialPublicOnly refuses to connect to an address that is not routable on the
+// public internet. It runs after DNS resolution, on the address actually being
+// dialled, so a hostname that resolves to a private range -- deliberately or
+// through a rebinding attack -- is stopped here rather than at validation time.
+//
+// An operator running this on a private network may genuinely want to deliver
+// to a host on it. WEBHOOKS_ALLOW_PRIVATE=true turns the check off; it is off
+// by default because the failure mode of the other default is a stranger
+// reading the cloud metadata service through your own server.
+func dialPublicOnly(ctx context.Context, network, addr string) (net.Conn, error) {
+	if allowPrivateWebhooks {
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, addr)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	var lastErr error = fmt.Errorf("no usable address for %s", host)
+	for _, ip := range ips {
+		if !isPublicIP(ip.IP) {
+			lastErr = fmt.Errorf(
+				"refusing to deliver to %s: %s is not a public address", host, ip.IP)
+			continue
+		}
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func isPublicIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	// 100.64.0.0/10, the carrier-grade NAT range, is not covered by IsPrivate
+	// and is where a good deal of cloud internal addressing lives.
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			return false
+		}
+	}
+	return true
 }

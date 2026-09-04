@@ -224,7 +224,11 @@ func (s *Scheduler) Reload() {
 	if s.cron != nil {
 		s.cron.Stop()
 	}
-	s.cron = cron.New()
+	// In UTC+7, the zone every timestamp in this application is written in.
+	// cron.New() defaults to time.Local, and the unit sets no TZ — so on a UTC
+	// host a user's "0 2 * * *" fired at 09:00 Vietnam time, in the middle of
+	// the working day, against production mail servers.
+	s.cron = cron.New(cron.WithLocation(store.VN))
 
 	schedules, err := s.DB.ActiveSchedules()
 	if err != nil {

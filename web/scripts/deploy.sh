@@ -40,7 +40,16 @@ if [ -z "${SERVER_IP:-}" ] || [ -z "${DOMAIN:-}" ]; then
     echo -e "${RED}Error: -i SERVER_IP and -d DOMAIN are required${NC}"
     exit 1
 fi
-[ -z "$SSL_EMAIL" ] && SSL_EMAIL="admin@${DOMAIN#*.}"
+# Strip the leading label only when what remains is still a domain:
+# "sync.example.com" -> admin@example.com, but "example.com" must not become
+# admin@com, which certbot rejects and which made a silent TLS failure likelier.
+if [ -z "$SSL_EMAIL" ]; then
+    MAIL_DOMAIN="$DOMAIN"
+    case "${DOMAIN#*.}" in
+        *.*) MAIL_DOMAIN="${DOMAIN#*.}" ;;
+    esac
+    SSL_EMAIL="admin@$MAIL_DOMAIN"
+fi
 
 WEB_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_DIR="$(cd "$WEB_DIR/.." && pwd)"
@@ -99,15 +108,47 @@ print_ok "System packages and Perl modules installed"
 print_step 4 "Uploading"
 #############################################################
 $SSH_CMD "mkdir -p $INSTALL_DIR/data/logs $INSTALL_DIR/static"
-scp -q -P "$SSH_PORT" "$REPO_DIR/imapsync" "$SSH_USER@$SERVER_IP:/usr/bin/imapsync"
-$SSH_CMD "chmod +x /usr/bin/imapsync"
-scp -q -P "$SSH_PORT" "$WEB_DIR/backend-go/dist/imapsync-web" "$WEB_DIR/backend-go/dist/createadmin" \
-    "$SSH_USER@$SERVER_IP:$INSTALL_DIR/"
-$SSH_CMD "chmod +x $INSTALL_DIR/imapsync-web $INSTALL_DIR/createadmin"
+
+# Refuse to interrupt a migration. A restart SIGTERMs the whole cgroup, so any
+# imapsync in flight dies mid-folder. It is recoverable -- the next run rescans
+# and the cache means it does not recopy -- but it is not something to do to
+# someone silently.
+RUNNING=$($SSH_CMD "curl -s -m 5 http://127.0.0.1:8000/api/health >/dev/null 2>&1 && \
+    sqlite3 $INSTALL_DIR/data/imapsync.db \
+    \"select count(*) from sync_jobs where status='running'\" 2>/dev/null || echo 0")
+if [ "${RUNNING:-0}" != "0" ] && [ "${FORCE:-}" != "1" ]; then
+    print_warn "$RUNNING sync(s) are running right now; deploying would kill them."
+    echo "  Wait for them, or re-run with FORCE=1 to deploy anyway."
+    exit 1
+fi
+
+# Everything below replaces files the running binary is using, and Linux
+# refuses to write to a file that is currently being executed (ETXTBSY) -- so
+# the second and every later deploy failed here, after imapsync had already
+# been replaced. Stop first, upload to a side name, move into place.
+$SSH_CMD "systemctl stop imapsync-web 2>/dev/null || true"
+
+scp -q -P "$SSH_PORT" "$REPO_DIR/imapsync" "$SSH_USER@$SERVER_IP:/usr/bin/imapsync.new"
+$SSH_CMD "chmod +x /usr/bin/imapsync.new && mv /usr/bin/imapsync.new /usr/bin/imapsync"
+
+scp -q -P "$SSH_PORT" "$WEB_DIR/backend-go/dist/imapsync-web" \
+    "$SSH_USER@$SERVER_IP:$INSTALL_DIR/imapsync-web.new"
+scp -q -P "$SSH_PORT" "$WEB_DIR/backend-go/dist/createadmin" \
+    "$SSH_USER@$SERVER_IP:$INSTALL_DIR/createadmin.new"
+$SSH_CMD "cd $INSTALL_DIR && chmod +x imapsync-web.new createadmin.new && \
+    mv imapsync-web.new imapsync-web && mv createadmin.new createadmin"
+
 # tar over ssh rather than rsync: tar is on every Debian install, rsync is not,
 # and this is a full replace anyway so there is nothing for rsync to diff.
+# Extract beside the live directory and swap, so a broken pipe mid-transfer
+# leaves the old frontend serving rather than an empty directory and 404s.
 tar czf - -C "$WEB_DIR/frontend/dist" . \
-    | $SSH_CMD "rm -rf $INSTALL_DIR/static && mkdir -p $INSTALL_DIR/static && tar xzf - -C $INSTALL_DIR/static"
+    | $SSH_CMD "rm -rf $INSTALL_DIR/static.new && mkdir -p $INSTALL_DIR/static.new && \
+        tar xzf - -C $INSTALL_DIR/static.new && \
+        rm -rf $INSTALL_DIR/static.old && \
+        mv $INSTALL_DIR/static $INSTALL_DIR/static.old 2>/dev/null || true; \
+        mv $INSTALL_DIR/static.new $INSTALL_DIR/static && \
+        rm -rf $INSTALL_DIR/static.old"
 print_ok "imapsync, binaries and frontend uploaded"
 
 #############################################################
@@ -119,6 +160,8 @@ INSTALL_DIR="$INSTALL_DIR"
 DOMAIN="$DOMAIN"
 
 if [ ! -f "\$INSTALL_DIR/.env" ]; then
+    # Create it unreadable, rather than creating it 0644 and fixing it after.
+    umask 077
     # A Fernet key is 32 random bytes, base64url-encoded with padding.
     FERNET_KEY=\$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')
     cat > "\$INSTALL_DIR/.env" <<EOF
@@ -138,7 +181,16 @@ else
 fi
 
 useradd -r -s /bin/false imapsync 2>/dev/null || true
-chown -R imapsync:imapsync "\$INSTALL_DIR"
+
+# Only the data directory belongs to the service. The binaries, the frontend
+# and .env stay root-owned: a service that owns its own executable can be made
+# to overwrite it, and Restart=always would then run whatever replaced it.
+# systemd reads EnvironmentFile as root before dropping privileges, so 600
+# root-only is enough for .env.
+chown -R root:root "\$INSTALL_DIR"
+chown -R imapsync:imapsync "\$INSTALL_DIR/data"
+chmod 600 "\$INSTALL_DIR/.env"
+chmod 755 "\$INSTALL_DIR" "\$INSTALL_DIR/imapsync-web" "\$INSTALL_DIR/createadmin"
 REMOTE
 print_ok "Configured"
 
@@ -157,7 +209,7 @@ systemctl enable imapsync-web >/dev/null 2>&1
 systemctl restart imapsync-web
 ln -sf /etc/nginx/sites-available/imapsync-web /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
-nginx -t >/dev/null 2>&1 && systemctl reload nginx
+nginx -t && systemctl reload nginx
 REMOTE
 print_ok "Service started, nginx reloaded"
 
@@ -168,7 +220,10 @@ if $SSH_CMD "certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m $SSL_EM
     print_ok "Certificate installed for $DOMAIN"
 else
     print_warn "Certbot failed — does $DOMAIN point at this server yet?"
-    echo "  Run later: certbot --nginx -d $DOMAIN"
+    echo "  The site is serving plain HTTP. Do not sign in or enter mailbox"
+    echo "  passwords until this succeeds:"
+    echo "    certbot --nginx -d $DOMAIN"
+    exit 1
 fi
 
 #############################################################
@@ -191,7 +246,7 @@ echo -e "  URL: ${CYAN}https://$DOMAIN${NC}"
 echo ""
 echo "  Next: create the admin account (self-registration is disabled)."
 echo "    ssh -p $SSH_PORT $SSH_USER@$SERVER_IP"
-echo "    cd $INSTALL_DIR && ./createadmin"
+echo "    cd $INSTALL_DIR && sudo -u imapsync ./createadmin"
 echo ""
 echo "  Service commands:"
 echo "    systemctl status imapsync-web"

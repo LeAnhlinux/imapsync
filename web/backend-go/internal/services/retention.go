@@ -33,7 +33,9 @@ func (rt *Retention) Start() {
 	if rt.cron != nil {
 		rt.cron.Stop()
 	}
-	rt.cron = cron.New()
+	// Same zone as everything else. The 03:30 slot below is only "when a
+	// migration is least likely to be running" if it means 03:30 locally.
+	rt.cron = cron.New(cron.WithLocation(store.VN))
 	if _, err := rt.cron.AddFunc(sweepSchedule, rt.Sweep); err != nil {
 		log.Printf("retention: could not schedule the sweep: %v", err)
 		return
