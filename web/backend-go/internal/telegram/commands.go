@@ -175,7 +175,7 @@ func (b *Bot) cmdStatus(cfg config, jobID int64) string {
 }
 
 func (b *Bot) cmdSync(cfg config, profileID int64) string {
-	jobID, err := b.Starter.StartProfile(cfg.userID, profileID, nil, false)
+	jobID, err := b.Starter.StartProfile(cfg.userID, profileID, nil, false, nil)
 	if errors.Is(err, store.ErrNotFound) {
 		return fmt.Sprintf("Profile %d not found. Use /profiles to list them.", profileID)
 	}

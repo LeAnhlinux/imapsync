@@ -34,6 +34,19 @@ export function SchedulesPage() {
   const [cron, setCron] = useState('0 2 * * *')
   const [error, setError] = useState('')
 
+  const act = async (fn: () => Promise<unknown>, whatFailed: string) => {
+    setError('')
+    try {
+      await fn()
+      load()
+    } catch (err: unknown) {
+      setError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          whatFailed,
+      )
+    }
+  }
+
   const load = () => {
     scheduleApi.list().then((r) => setSchedules(r.data)).catch(() => {})
     profileApi.list().then((r) => setProfiles(r.data)).catch(() => {})
@@ -62,15 +75,12 @@ export function SchedulesPage() {
     }
   }
 
-  const toggle = async (s: Schedule) => {
-    await scheduleApi.update(s.id, { is_active: !s.is_active })
-    load()
-  }
+  const toggle = (s: Schedule) =>
+    act(() => scheduleApi.update(s.id, { is_active: !s.is_active }),
+      'Could not change that schedule.')
 
-  const remove = async (id: number) => {
-    await scheduleApi.delete(id)
-    load()
-  }
+  const remove = (id: number) =>
+    act(() => scheduleApi.delete(id), 'Could not delete that schedule.')
 
   const profileName = (id: number) => profiles.find((p) => p.id === id)?.name || `Profile #${id}`
 

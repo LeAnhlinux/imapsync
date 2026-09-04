@@ -58,7 +58,7 @@ type WebhookService interface {
 }
 
 type Starter interface {
-	StartProfile(userID, profileID int64, folders []string, dryRun bool) (int64, error)
+	StartProfile(userID, profileID int64, folders []string, dryRun bool, override map[string]any) (int64, error)
 	StartAdhoc(userID int64, p AdhocParams) (int64, error)
 }
 

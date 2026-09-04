@@ -337,3 +337,164 @@ func TestUpdateJobCountsOnlyTouchesRunningJobs(t *testing.T) {
 			got.MessagesTransferred, got.BytesTransferred)
 	}
 }
+
+func TestDeleteProfileThatHasBeenUsed(t *testing.T) {
+	// This is the case that matters: a profile nobody has run is trivial to
+	// delete, and a profile with a job attached used to fail with
+	// "FOREIGN KEY constraint failed", which the API turned into a 500. The
+	// user could not remove the profile, so the stored IMAP password stayed.
+	db := open(t)
+	u := user(t, db, "a")
+	p := &Profile{UserID: u.ID, Name: "p", Host1: "h", User1: "u", Password1Enc: "e",
+		Host2: "h", User2: "u", Password2Enc: "e"}
+	if err := db.CreateProfile(p); err != nil {
+		t.Fatal(err)
+	}
+	pid := p.ID
+
+	j := &SyncJob{UserID: u.ID, ProfileID: &pid, Status: "completed"}
+	if err := db.CreateJob(j); err != nil {
+		t.Fatal(err)
+	}
+	sc := &Schedule{UserID: u.ID, ProfileID: pid, CronExpression: "0 3 * * *", IsActive: true}
+	if err := db.CreateSchedule(sc); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteProfile(pid, u.ID); err != nil {
+		t.Fatalf("deleting a profile that has been used: %v", err)
+	}
+
+	// The job survives, because History is what the dialog promises to keep.
+	got, err := db.JobByID(j.ID)
+	if err != nil {
+		t.Fatalf("the job was removed with the profile: %v", err)
+	}
+	if got.ProfileID != nil {
+		t.Error("the job still points at a profile that no longer exists")
+	}
+	// The schedule cannot outlive the profile it runs.
+	if list, err := db.SchedulesByUser(u.ID); err != nil || len(list) != 0 {
+		t.Errorf("schedules left behind: %v err=%v", list, err)
+	}
+	if _, err := db.ProfileByID(pid, u.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the profile is still readable: %v", err)
+	}
+}
+
+func TestDeleteProfileIsAtomicAcrossUsers(t *testing.T) {
+	// The cleanup statements are scoped by user_id too, so one user deleting a
+	// profile cannot touch another user's rows even if an id collided.
+	db := open(t)
+	a, b := user(t, db, "a"), user(t, db, "b")
+	p := &Profile{UserID: a.ID, Name: "p", Host1: "h", User1: "u", Password1Enc: "e",
+		Host2: "h", User2: "u", Password2Enc: "e"}
+	if err := db.CreateProfile(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteProfile(p.ID, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another user deleted the profile: %v", err)
+	}
+	if _, err := db.ProfileByID(p.ID, a.ID); err != nil {
+		t.Errorf("the failed delete removed it anyway: %v", err)
+	}
+}
+
+func TestAPIKeyExpiryUsesTheStoredWallClock(t *testing.T) {
+	// expires_at goes in as a naive UTC+7 reading and the driver reads it back
+	// tagged UTC. Comparing those as instants gave every key seven extra hours:
+	// a key created with expires_in_days=1 authenticated for 31.
+	db := open(t)
+	u := user(t, db, "a")
+
+	for _, c := range []struct {
+		name  string
+		when  time.Time
+		valid bool
+	}{
+		{"three hours ago", NowVN().Add(-3 * time.Hour), false},
+		{"one minute ago", NowVN().Add(-time.Minute), false},
+		{"six hours ago (inside the old skew)", NowVN().Add(-6 * time.Hour), false},
+		{"in an hour", NowVN().Add(time.Hour), true},
+		{"tomorrow", NowVN().AddDate(0, 0, 1), true},
+	} {
+		exp := NaiveTime{c.when}
+		k := &APIKey{UserID: u.ID, Name: c.name, Prefix: "isk_x", Scopes: "sync:read",
+			RateLimit: 60, ExpiresAt: &exp}
+		hash := "hash-" + c.name
+		if err := db.CreateAPIKey(k, hash); err != nil {
+			t.Fatal(err)
+		}
+		got, err := db.APIKeyByHash(hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Usable() != c.valid {
+			t.Errorf("key expiring %s: Usable()=%v, want %v", c.name, got.Usable(), c.valid)
+		}
+	}
+
+	// A key with no expiry never expires.
+	k := &APIKey{UserID: u.ID, Name: "forever", Prefix: "isk_y", Scopes: "sync:read", RateLimit: 60}
+	if err := db.CreateAPIKey(k, "hash-forever"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := db.APIKeyByHash("hash-forever")
+	if !got.Usable() {
+		t.Error("a key with no expiry was treated as expired")
+	}
+}
+
+func TestInVNStampsTheStoredReadingWithTheRightOffset(t *testing.T) {
+	// What comes back from the driver: the right wall clock, the wrong zone.
+	fromDriver := time.Date(2026, 7, 30, 9, 45, 23, 0, time.UTC)
+
+	got := InVN(fromDriver)
+	if want := "2026-07-30T09:45:23+07:00"; got.Format(time.RFC3339) != want {
+		t.Errorf("formatted as %s, want %s", got.Format(time.RFC3339), want)
+	}
+	// The reading must not move; only the zone it is labelled with.
+	if got.Hour() != 9 || got.Minute() != 45 {
+		t.Errorf("the wall clock shifted to %02d:%02d", got.Hour(), got.Minute())
+	}
+	// And it must name a real instant seven hours earlier in UTC.
+	if h := got.UTC().Hour(); h != 2 {
+		t.Errorf("as UTC that is %02d:00, want 02:00", h)
+	}
+}
+
+func TestReconcileOrphanBatchesClearsHeldCredentials(t *testing.T) {
+	// A restart mid-batch left the row 'running' forever: it could not be
+	// started again, could not be cancelled, and kept every remaining mailbox's
+	// encrypted credentials in batch_data indefinitely.
+	db := open(t)
+	u := user(t, db, "a")
+	b := &BatchRun{UserID: u.ID, Filename: "x.csv", TotalRows: 5, Status: "running",
+		BatchData: JSONMap{"rows": []any{map[string]any{"host1": "h", "password1": "gAAAAAB..."}}}}
+	if err := db.CreateBatch(b); err != nil {
+		t.Fatal(err)
+	}
+	done := &BatchRun{UserID: u.ID, Filename: "y.csv", TotalRows: 1, Status: "completed"}
+	if err := db.CreateBatch(done); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.ReconcileOrphanBatches()
+	if err != nil || n != 1 {
+		t.Fatalf("reconciled %d err=%v, want 1", n, err)
+	}
+	got, err := db.BatchByID(b.ID, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "interrupted" {
+		t.Errorf("status is %q, want interrupted", got.Status)
+	}
+	if len(got.BatchData) != 0 {
+		t.Errorf("the credentials it was holding were not cleared: %v", got.BatchData)
+	}
+	// A finished batch must be left alone.
+	if other, _ := db.BatchByID(done.ID, u.ID); other.Status != "completed" {
+		t.Errorf("a completed batch was rewritten to %q", other.Status)
+	}
+}

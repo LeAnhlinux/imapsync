@@ -302,3 +302,19 @@ func (db *DB) AbortBatch(id int64) error {
 	_, err := db.Exec(`UPDATE batch_runs SET status='aborted', batch_data=NULL WHERE id=?`, id)
 	return err
 }
+
+// ReconcileOrphanBatches marks batches left running by a crash or restart.
+//
+// Which batches are live is in-memory state, so a restart loses it: the row
+// stayed 'running' forever, the API and the bot both refused to start it again
+// ("already running"), Cancel answered "not running" because the map was empty,
+// and batch_data — holding the encrypted credentials of every mailbox not yet
+// reached — was never cleared. ReconcileOrphans does the same for sync_jobs.
+func (db *DB) ReconcileOrphanBatches() (int64, error) {
+	res, err := db.Exec(
+		`UPDATE batch_runs SET status='interrupted', batch_data=NULL WHERE status='running'`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

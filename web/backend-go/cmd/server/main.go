@@ -42,6 +42,12 @@ func main() {
 	} else if n > 0 {
 		log.Printf("marked %d job(s) left running by a previous shutdown as interrupted", n)
 	}
+	if n, err := db.ReconcileOrphanBatches(); err != nil {
+		log.Printf("reconcile orphan batches: %v", err)
+	} else if n > 0 {
+		log.Printf("marked %d batch(es) left running by a previous shutdown as interrupted, "+
+			"and cleared the credentials they still held", n)
+	}
 
 	run := runner.New(cfg.ImapsyncPath, cfg.TmpDir(), cfg.CacheDir(), cfg.LogDir)
 	starter := &services.Starter{DB: db, Sec: sec, Runner: run}

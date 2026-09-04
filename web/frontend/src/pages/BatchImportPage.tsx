@@ -34,6 +34,7 @@ export function BatchImportPage() {
   const [batch, setBatch] = useState<BatchRun | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [pollWarning, setPollWarning] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Leaving the page mid-run must not leave a timer firing forever.
@@ -72,13 +73,25 @@ export function BatchImportPage() {
     try {
       const res = await batchApi.start(batch.id)
       setBatch(res.data)
+      // A single failed poll used to stop the poll for good: the batch kept
+      // running on the server while the page froze at whatever count it had
+      // last seen, with no error, so a healthy run looked wedged.
+      let misses = 0
       pollRef.current = setInterval(async () => {
         try {
           const r = await batchApi.get(batch.id)
+          misses = 0
+          setPollWarning('')
           setBatch(r.data)
           if (r.data.status !== 'running' && pollRef.current) clearInterval(pollRef.current)
         } catch {
-          if (pollRef.current) clearInterval(pollRef.current)
+          misses += 1
+          if (misses >= 3) {
+            setPollWarning(
+              'Lost contact with the server. The batch is probably still running — reload to check.',
+            )
+            if (pollRef.current) clearInterval(pollRef.current)
+          }
         }
       }, 3000)
     } catch (err: unknown) {
@@ -202,6 +215,12 @@ export function BatchImportPage() {
             {batch.status === 'completed' && (
               <p className="text-sm text-muted-foreground">
                 Finished. Each mailbox is a separate job in History.
+              </p>
+            )}
+
+            {pollWarning && (
+              <p role="alert" className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+                {pollWarning}
               </p>
             )}
 

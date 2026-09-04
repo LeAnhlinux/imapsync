@@ -38,3 +38,16 @@ func naivePtr(t sql.NullTime) *NaiveTime {
 	}
 	return &NaiveTime{t.Time}
 }
+
+// InVN reinterprets a wall clock read back from the database as the UTC+7 time
+// it was written as.
+//
+// Timestamps are stored naive — "2026-07-30 09:45:23.123456", no zone — and
+// modernc.org/sqlite parses DATETIME columns without a location, so every value
+// comes back tagged UTC while holding a UTC+7 reading. Anything that treats
+// such a value as an instant, or formats it with an offset, is wrong by seven
+// hours until it passes through here.
+func InVN(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(),
+		t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), VN)
+}

@@ -48,14 +48,15 @@ function LogViewer({
   live: boolean
   onClose: () => void
 }) {
-  const { logs, jobStatus } = useJobWebSocket(live ? id : null)
+  const { logs, jobStatus, connected } = useJobWebSocket(live ? id : null)
   const boxRef = useRef<HTMLPreElement>(null)
   const [follow, setFollow] = useState(true)
 
   // The socket replays the log it has, so once it has said anything it is the
   // more current of the two and the initial fetch would only duplicate it.
   const text = logs.length > 0 ? logs.join('\n') : initial
-  const streaming = live && jobStatus === null
+  const streaming = live && jobStatus === null && connected
+  const lostContact = live && jobStatus === null && !connected && logs.length > 0
 
   useEffect(() => {
     if (follow && boxRef.current) {
@@ -73,6 +74,12 @@ function LogViewer({
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" aria-hidden />
               Live
+            </span>
+          )}
+          {lostContact && (
+            <span className="flex items-center gap-1.5 text-xs text-warning">
+              <span className="h-1.5 w-1.5 rounded-full bg-warning" aria-hidden />
+              Disconnected — reopen to catch up
             </span>
           )}
           <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">

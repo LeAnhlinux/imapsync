@@ -28,6 +28,23 @@ export function ApiKeysPage() {
   const [hookError, setHookError] = useState('')
   const [hookResult, setHookResult] = useState<string | null>(null)
 
+  // Revoking a key or deleting a webhook used to be fire-and-forget: a failure
+  // left the row exactly as it was, with nothing said, so the user believed an
+  // integration had been cut off when it had not.
+  const [actionError, setActionError] = useState('')
+  const act = async (fn: () => Promise<unknown>, whatFailed: string) => {
+    setActionError('')
+    try {
+      await fn()
+      reload()
+    } catch (err: unknown) {
+      setActionError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          whatFailed,
+      )
+    }
+  }
+
   const reload = () => {
     apiKeyApi.list().then((r) => setKeys(r.data)).catch(() => {})
     webhookApi.list().then((r) => setHooks(r.data)).catch(() => {})
@@ -93,6 +110,15 @@ export function ApiKeysPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <PageHeader title="API Access" description="Keys for programs, and webhooks for job events." />
+
+      {actionError && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          {actionError}
+        </div>
+      )}
 
       {/* ------------------------------------------------------- API keys */}
       <Card>
@@ -187,10 +213,10 @@ export function ApiKeysPage() {
                       <td className="py-2 text-right whitespace-nowrap">
                         {!k.revoked && (
                           <Button size="sm" variant="outline"
-                            onClick={() => apiKeyApi.revoke(k.id).then(reload)}>Revoke</Button>
+                            onClick={() => act(() => apiKeyApi.revoke(k.id), "Could not revoke that key.")}>Revoke</Button>
                         )}
                         <Button size="sm" variant="outline" className="ml-2"
-                          onClick={() => apiKeyApi.delete(k.id).then(reload)}>Delete</Button>
+                          onClick={() => act(() => apiKeyApi.delete(k.id), "Could not delete that key.")}>Delete</Button>
                       </td>
                     </tr>
                   ))}
@@ -274,11 +300,11 @@ export function ApiKeysPage() {
                       <td className="py-2 text-right whitespace-nowrap">
                         <Button size="sm" variant="outline" onClick={() => testHook(h.id)}>Test</Button>
                         <Button size="sm" variant="outline" className="ml-2"
-                          onClick={() => webhookApi.update(h.id, { is_active: !h.is_active }).then(reload)}>
+                          onClick={() => act(() => webhookApi.update(h.id, { is_active: !h.is_active }), "Could not change that webhook.")}>
                           {h.is_active ? 'Disable' : 'Enable'}
                         </Button>
                         <Button size="sm" variant="outline" className="ml-2"
-                          onClick={() => webhookApi.delete(h.id).then(reload)}>Delete</Button>
+                          onClick={() => act(() => webhookApi.delete(h.id), "Could not delete that webhook.")}>Delete</Button>
                       </td>
                     </tr>
                   ))}

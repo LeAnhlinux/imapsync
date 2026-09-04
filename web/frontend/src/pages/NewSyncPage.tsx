@@ -89,6 +89,12 @@ export function NewSyncPage() {
   }, [])
 
   const pickProfile = (id: number | null) => {
+    // A folder list browsed from the previous source is not a list of this
+    // one's folders. Leaving it up let someone tick "Archive" from mailbox A
+    // and run it against mailbox B, where it may not exist.
+    setAvailable(null)
+    setBrowseError('')
+    setFoldersText('')
     setSelectedProfile(id)
     const p = profiles.find((pr) => pr.id === id)
     if (p) {
@@ -114,9 +120,14 @@ export function NewSyncPage() {
     setError('')
     try {
       const folders = foldersText.split('\n').map((f) => f.trim()).filter(Boolean)
+      // Send the off state too, not just the on state. A profile can have
+      // usecache saved as on, and "unticked" has to be able to override that —
+      // omitting the key just means "whatever the profile says", which is how
+      // the review screen came to describe a run that never happened.
       const extra_options: Record<string, boolean> = {}
       if (automap) extra_options.automap = true
       if (usecache) extra_options.usecache = true
+      else extra_options.nousecache = true
       const data = selectedProfile
         ? { profile_id: selectedProfile, dry_run: dryRun, folders, extra_options }
         : { host1, user1, password1, ssl1, host2, user2, password2, ssl2, dry_run: dryRun, folders, extra_options }

@@ -130,3 +130,71 @@ func TestPassfilesAreRemovedAndNeverInArgv(t *testing.T) {
 		t.Error("a password was passed in argv, where ps can read it")
 	}
 }
+
+func TestAnEnormousLineDoesNotHangTheJob(t *testing.T) {
+	// A bufio.Scanner stops at its token limit and sets an error nobody read, so
+	// the loop ended while imapsync was still writing. cmd.Wait() then blocked
+	// forever on a full pipe: the job never finished, the batch behind it never
+	// moved, and two passfiles holding cleartext mailbox passwords stayed on
+	// disk. This test hangs on the old code and passes on the new.
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	if err := os.Mkdir(logDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join(dir, "huge-line")
+	body := `#!/bin/sh
+echo "Here is imapsync 2.229 on host test"
+head -c 3000000 /dev/zero | tr '\\0' 'A'
+echo
+echo "msg Borrador/1 {1050}            copied to x/1  0.5 msgs/s  1 KiB/s 1 KiB copied ETA: Thu  0 s  0/1 msgs left"
+echo "Messages transferred                    : 1"
+echo "Detected 0 errors"
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(script, dir, dir, logDir)
+	job, err := r.Start(1, Params{Host1: "h1", User1: "u1", Password1: "p1",
+		Host2: "h2", User2: "u2", Password2: "p2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() { job.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the job never finished: a single over-long line stalled the reader")
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// Everything after the huge line must still have been read.
+	full := r.LogFor(1)
+	for _, want := range []string{"Here is imapsync", "Borrador/1", "Detected 0 errors"} {
+		if !strings.Contains(full, want) {
+			t.Errorf("output after the over-long line was lost: missing %q", want)
+		}
+	}
+	if !strings.Contains(full, "[line truncated]") {
+		t.Error("the over-long line was kept whole, or silently dropped without a marker")
+	}
+	// And the truncation must be bounded, not the full 3 MB.
+	if len(full) > 4*maxLineLen {
+		t.Errorf("the log kept %d bytes; the over-long line was not truncated", len(full))
+	}
+
+	// The passfiles must be gone, which is the part that matters most.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "imapsync_p") {
+			t.Errorf("a cleartext passfile survived: %s", e.Name())
+		}
+	}
+}

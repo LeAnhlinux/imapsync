@@ -49,7 +49,14 @@ func (s *Starter) launch(userID int64, profileID *int64, p runner.Params) (int64
 	return job.ID, nil
 }
 
-func (s *Starter) StartProfile(userID, profileID int64, folders []string, dryRun bool) (int64, error) {
+// StartProfile runs a stored profile. override, when non-nil, is merged over
+// the profile's saved options for this run only — the New Sync screen offers
+// those checkboxes and then showed the user's choice back to them on the review
+// screen, while the run silently used whatever the profile had saved. Unticking
+// "use cache" and getting a cached run anyway is the kind of quiet disagreement
+// that costs someone a migration.
+func (s *Starter) StartProfile(userID, profileID int64, folders []string, dryRun bool,
+	override map[string]any) (int64, error) {
 	p, err := s.DB.ProfileByID(profileID, userID)
 	if err != nil {
 		return 0, err
@@ -62,11 +69,19 @@ func (s *Starter) StartProfile(userID, profileID int64, folders []string, dryRun
 	if err != nil {
 		return 0, err
 	}
+	opts := map[string]any{}
+	for k, v := range p.ExtraOptions {
+		opts[k] = v
+	}
+	for k, v := range override {
+		opts[k] = v
+	}
+
 	return s.launch(userID, &profileID, runner.Params{
 		Host1: p.Host1, User1: p.User1, Password1: pw1,
 		Host2: p.Host2, User2: p.User2, Password2: pw2,
 		SSL1: p.SSL1, SSL2: p.SSL2,
-		ExtraOptions: p.ExtraOptions, Folders: folders, DryRun: dryRun,
+		ExtraOptions: opts, Folders: folders, DryRun: dryRun,
 	})
 }
 
@@ -240,7 +255,7 @@ func (s *Scheduler) run(scheduleID int64) {
 		return
 	}
 	_ = s.DB.TouchScheduleRun(sc.ID, nil)
-	if _, err := s.Starter.StartProfile(sc.UserID, sc.ProfileID, nil, false); err != nil {
+	if _, err := s.Starter.StartProfile(sc.UserID, sc.ProfileID, nil, false, nil); err != nil {
 		// A deleted profile leaves the schedule pointing at nothing; log it
 		// rather than taking the cron goroutine down.
 		log.Printf("scheduled sync for schedule %d: %v", sc.ID, err)

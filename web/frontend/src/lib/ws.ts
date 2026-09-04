@@ -24,6 +24,10 @@ export function useJobWebSocket(jobId: number | null) {
   const [logs, setLogs] = useState<string[]>([])
   const [progress, setProgress] = useState<JobProgress | null>(null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
+  // Whether the socket is actually up. Without this a proxy idle timeout left
+  // the log frozen while the UI kept pulsing "Live", so a user could watch a
+  // dead pane believing they were seeing current output.
+  const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
   const connect = useCallback(() => {
@@ -34,7 +38,12 @@ export function useJobWebSocket(jobId: number | null) {
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws/jobs/${jobId}?token=${token}`)
 
     ws.onmessage = (event) => {
-      const msg: WsMessage = JSON.parse(event.data)
+      let msg: WsMessage
+      try {
+        msg = JSON.parse(event.data)
+      } catch {
+        return // a malformed frame must not throw inside the handler
+      }
       switch (msg.type) {
         case 'log':
           setLogs((prev) => [...prev, msg.data || ''])
@@ -55,8 +64,14 @@ export function useJobWebSocket(jobId: number | null) {
     }
 
     ws.onclose = () => {
-      wsRef.current = null
+      // Only clear the ref if this is still the current socket: a cleanup that
+      // closed an older one would otherwise null out its replacement.
+      if (wsRef.current === ws) wsRef.current = null
+      setConnected(false)
     }
+
+    ws.onerror = () => setConnected(false)
+    ws.onopen = () => setConnected(true)
 
     wsRef.current = ws
   }, [jobId])
@@ -74,5 +89,5 @@ export function useJobWebSocket(jobId: number | null) {
     setJobStatus(null)
   }, [])
 
-  return { logs, progress, jobStatus, clear }
+  return { logs, progress, jobStatus, connected, clear }
 }

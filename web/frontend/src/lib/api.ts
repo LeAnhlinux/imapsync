@@ -15,7 +15,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    // A 401 from /auth/login means "wrong password", not "your session ended".
+    // Redirecting on it reloaded the page the user was already on, which wiped
+    // the error message the login form had just set — so a mistyped password
+    // silently blanked the form and said nothing at all.
+    const isAuthCall = err.config?.url?.startsWith('/auth/')
+    if (err.response?.status === 401 && !isAuthCall) {
       localStorage.removeItem('token')
       window.location.href = '/login'
     }

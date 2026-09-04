@@ -31,6 +31,7 @@ export function ProfilesPage() {
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<Profile | null>(null)
 
   const load = () => {
@@ -84,9 +85,19 @@ export function ProfilesPage() {
 
   const doDelete = async () => {
     if (!confirmDelete) return
-    await profileApi.delete(confirmDelete.id)
-    setConfirmDelete(null)
-    load()
+    setDeleteError('')
+    try {
+      await profileApi.delete(confirmDelete.id)
+      setConfirmDelete(null)
+      load()
+    } catch (err: unknown) {
+      // Unhandled, this failed silently: the dialog stayed open, unchanged,
+      // and the user clicked Delete again.
+      setDeleteError(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not delete that profile.',
+      )
+    }
   }
 
   const side = (which: 1 | 2) => {
@@ -283,10 +294,27 @@ export function ProfilesPage() {
             <h2 className="text-sm font-semibold">Delete this profile?</h2>
             <p className="mt-1.5 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{confirmDelete.name}</span> and its
-              stored credentials will be removed. Jobs already run from it stay in History.
+              stored credentials will be removed. Jobs already run from it stay in History,
+              and any schedule that used it is removed with it.
             </p>
+            {deleteError && (
+              <p
+                role="alert"
+                className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+              >
+                {deleteError}
+              </p>
+            )}
             <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setConfirmDelete(null)
+                  setDeleteError('')
+                }}
+              >
+                Cancel
+              </Button>
               <Button variant="destructive" onClick={doDelete}>Delete profile</Button>
             </div>
           </div>

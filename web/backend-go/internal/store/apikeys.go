@@ -53,7 +53,13 @@ func (k *APIKey) Usable() bool {
 	if k.Revoked {
 		return false
 	}
-	if k.ExpiresAt != nil && !k.ExpiresAt.IsZero() && NowVN().After(k.ExpiresAt.Time) {
+	// Compare wall clocks, not instants. expires_at is stored as a naive UTC+7
+	// reading, and the sqlite driver hands it back tagged UTC — so comparing the
+	// two as instants made every key outlive its stated expiry by seven hours.
+	// TimeLayout is zero-padded, so string order is chronological; PurgeJobs
+	// already relies on the same property.
+	if k.ExpiresAt != nil && !k.ExpiresAt.IsZero() &&
+		NowVN().Format(TimeLayout) > k.ExpiresAt.Format(TimeLayout) {
 		return false
 	}
 	return true

@@ -317,8 +317,7 @@ func scanLine(line string, p *Progress) bool {
 }
 
 func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) }, passfiles []string) {
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	reader := bufio.NewReaderSize(stdout, 64*1024)
 
 	// A copy line per message means progress changes thousands of times. Both
 	// the DB write and the WebSocket push are throttled to something a human can
@@ -326,8 +325,11 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 	const publishEvery = time.Second
 	var lastPublish time.Time
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, err := readLine(reader)
+		if line == "" && err != nil {
+			break
+		}
 
 		job.mu.Lock()
 		job.lines = append(job.lines, line)
@@ -352,6 +354,10 @@ func (r *Runner) stream(job *Job, stdout interface{ Read([]byte) (int, error) },
 			if r.OnProgress != nil {
 				r.OnProgress(job.ID, p)
 			}
+		}
+
+		if err != nil {
+			break
 		}
 	}
 
@@ -627,4 +633,56 @@ func writePassfile(dir, prefix, password string) (string, error) {
 // the row is a few hundred bytes, the log can be megabytes.
 func (r *Runner) DeleteLog(jobID int64) {
 	_ = os.Remove(filepath.Join(r.LogDir, fmt.Sprintf("%d.txt", jobID)))
+}
+
+// maxLineLen caps what one line of imapsync output may contribute to the log.
+const maxLineLen = 1 << 20 // 1 MiB
+
+// readLine returns one line, and — this is the whole point — never stops
+// reading before EOF.
+//
+// It used to be a bufio.Scanner with a 1 MiB token limit. On a longer line
+// Scan() returns false and sets an error nobody checked, so the loop ended
+// while imapsync was still running. cmd.Wait() then blocked forever: it closes
+// the stdout pipe only after the process exits, and the process was blocked
+// writing into a 64 KiB pipe nobody was draining. The job never finished, the
+// batch behind it never advanced, and both passfiles — holding the mailbox
+// passwords in cleartext — stayed on disk. imapsync does echo server responses
+// into single lines, so this was reachable, not theoretical.
+//
+// Now an over-long line is truncated in what we keep and the rest is discarded,
+// but the pipe keeps draining either way.
+func readLine(r *bufio.Reader) (string, error) {
+	var b strings.Builder
+	truncated := false
+	for {
+		// ReadSlice, not ReadString: it returns at most one buffer's worth, so a
+		// line of any length is drained in bounded memory rather than assembled
+		// whole before we decide to throw most of it away.
+		chunk, err := r.ReadSlice('\n')
+		if len(chunk) > 0 {
+			if room := maxLineLen - b.Len(); room > 0 {
+				if len(chunk) > room {
+					b.Write(chunk[:room])
+					truncated = true
+				} else {
+					b.Write(chunk)
+				}
+			} else {
+				truncated = true
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue // more of the same line; keep draining
+		}
+		return finishLine(b.String(), truncated), err
+	}
+}
+
+func finishLine(s string, truncated bool) string {
+	s = strings.TrimRight(s, "\r\n")
+	if truncated {
+		s += " ...[line truncated]"
+	}
+	return s
 }

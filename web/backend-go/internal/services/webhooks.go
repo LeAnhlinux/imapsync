@@ -101,11 +101,15 @@ func (wh *Webhooks) payloadFor(event string, jobID int64) (*Payload, error) {
 	p.Job.BytesTransferred = job.BytesTransferred
 	p.Job.ErrorsCount = job.ErrorsCount
 	p.Job.ExitCode = job.ExitCode
+	// The stored value is a naive UTC+7 wall clock that the sqlite driver hands
+	// back tagged UTC. Formatting it straight to RFC3339 emitted "...Z" and told
+	// every receiver the time was UTC — seven hours off. Re-stamp it into the
+	// zone it was actually written in, so the offset in the payload is true.
 	if job.StartedAt != nil {
-		p.Job.StartedAt = job.StartedAt.Format(time.RFC3339)
+		p.Job.StartedAt = store.InVN(job.StartedAt.Time).Format(time.RFC3339)
 	}
 	if job.FinishedAt != nil {
-		p.Job.FinishedAt = job.FinishedAt.Format(time.RFC3339)
+		p.Job.FinishedAt = store.InVN(job.FinishedAt.Time).Format(time.RFC3339)
 	}
 	p.Job.Summary = deref(job.Summary)
 	return &p, nil

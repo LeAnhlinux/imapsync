@@ -266,7 +266,16 @@ func (b *Batch) run(ctx context.Context, batchID, userID int64, data store.JSONM
 			_ = b.DB.BumpBatchCounts(batchID, 0, 1)
 			break
 		}
-		_ = b.DB.BumpBatchCounts(batchID, 1, 0)
+
+		// "It ran" is not "it worked". This counted every mailbox that merely
+		// started as completed, so a CSV where every password was wrong reported
+		// completed_rows=10, failed_rows=0 — and the operator believed ten
+		// mailboxes had migrated.
+		if b.jobSucceeded(jobID) {
+			_ = b.DB.BumpBatchCounts(batchID, 1, 0)
+		} else {
+			_ = b.DB.BumpBatchCounts(batchID, 0, 1)
+		}
 	}
 
 	// Clearing batch_data is part of finishing: it holds credentials.
@@ -390,3 +399,18 @@ var (
 	_ api.BatchService  = (*Batch)(nil)
 	_ api.FolderBrowser = (*Folders)(nil)
 )
+
+// jobSucceeded reports whether a finished mailbox actually copied cleanly.
+// A job the completion handler has not written yet reads as running; treat that
+// as success, since the alternative is calling a good run failed on a race.
+func (b *Batch) jobSucceeded(jobID int64) bool {
+	job, err := b.DB.JobByID(jobID)
+	if err != nil {
+		return false
+	}
+	switch job.Status {
+	case "failed", "aborted", "interrupted":
+		return false
+	}
+	return true
+}

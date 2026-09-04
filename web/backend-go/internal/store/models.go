@@ -251,13 +251,38 @@ func (db *DB) UpdateProfile(p *Profile) error {
 	return err
 }
 
+// DeleteProfile removes a profile and everything that points at it.
+//
+// sync_jobs.profile_id and schedules.profile_id are plain REFERENCES with no ON
+// DELETE action, and this port turns foreign keys on where the Python one left
+// them off. So a bare DELETE failed with "FOREIGN KEY constraint failed" for
+// any profile that had ever been used -- which is every profile a user would
+// want to delete, and the one case where they want the stored IMAP password
+// gone. History is kept: jobs lose the link, not the row, which is what the
+// confirmation dialog promises. Schedules cannot outlive the profile they run,
+// so they go with it.
 func (db *DB) DeleteProfile(id, userID int64) error {
-	res, err := db.Exec(`DELETE FROM profiles WHERE id=? AND user_id=?`, id, userID)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		`UPDATE sync_jobs SET profile_id=NULL WHERE profile_id=? AND user_id=?`,
+		id, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM schedules WHERE profile_id=? AND user_id=?`, id, userID); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`DELETE FROM profiles WHERE id=? AND user_id=?`, id, userID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
