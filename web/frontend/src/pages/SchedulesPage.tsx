@@ -3,11 +3,16 @@ import { Link } from 'react-router-dom'
 import { AlertCircle, Clock, Pause, Play, Plus, X } from 'lucide-react'
 import { profileApi, scheduleApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { EmptyState, PageHeader, formatDateTime } from '@/components/ui/data'
+import { EmptyState, PageHeader } from '@/components/ui/data'
+import { formatDateTime } from '@/lib/format'
 
-interface Profile { id: number; name: string }
+interface Profile {
+  id: number
+  name: string
+}
 interface Schedule {
   id: number
   profile_id: number
@@ -33,6 +38,7 @@ export function SchedulesPage() {
   const [profileId, setProfileId] = useState(0)
   const [cron, setCron] = useState('0 2 * * *')
   const [error, setError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<Schedule | null>(null)
 
   const act = async (fn: () => Promise<unknown>, whatFailed: string) => {
     setError('')
@@ -41,18 +47,25 @@ export function SchedulesPage() {
       load()
     } catch (err: unknown) {
       setError(
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          whatFailed,
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || whatFailed
       )
     }
   }
 
   const load = () => {
-    scheduleApi.list().then((r) => setSchedules(r.data)).catch(() => {})
-    profileApi.list().then((r) => setProfiles(r.data)).catch(() => {})
+    scheduleApi
+      .list()
+      .then((r) => setSchedules(r.data))
+      .catch(() => {})
+    profileApi
+      .list()
+      .then((r) => setProfiles(r.data))
+      .catch(() => {})
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,7 +75,10 @@ export function SchedulesPage() {
       return
     }
     try {
-      await scheduleApi.create({ profile_id: profileId, cron_expression: cron })
+      await scheduleApi.create({
+        profile_id: profileId,
+        cron_expression: cron,
+      })
       setShowForm(false)
       setCron('0 2 * * *')
       setProfileId(0)
@@ -70,14 +86,16 @@ export function SchedulesPage() {
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not create the schedule.',
+          'Could not create the schedule.'
       )
     }
   }
 
   const toggle = (s: Schedule) =>
-    act(() => scheduleApi.update(s.id, { is_active: !s.is_active }),
-      'Could not change that schedule.')
+    act(
+      () => scheduleApi.update(s.id, { is_active: !s.is_active }),
+      'Could not change that schedule.'
+    )
 
   const remove = (id: number) =>
     act(() => scheduleApi.delete(id), 'Could not delete that schedule.')
@@ -104,13 +122,20 @@ export function SchedulesPage() {
         <div className="mb-4 rounded-lg border border-border bg-card">
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
             <h2 className="text-sm font-semibold">New schedule</h2>
-            <Button variant="ghost" size="icon" onClick={() => setShowForm(false)} aria-label="Cancel">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowForm(false)}
+              aria-label="Cancel"
+            >
               <X className="h-4 w-4" />
             </Button>
           </header>
           <form onSubmit={handleCreate} className="space-y-4 p-4">
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="profile">Profile</label>
+              <label className="mb-1 block text-sm font-medium" htmlFor="profile">
+                Profile
+              </label>
               <select
                 id="profile"
                 className="flex h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
@@ -119,13 +144,17 @@ export function SchedulesPage() {
               >
                 <option value={0}>Select a profile…</option>
                 {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="cron">Cron expression</label>
+              <label className="mb-1 block text-sm font-medium" htmlFor="cron">
+                Cron expression
+              </label>
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {PRESETS.map((p) => (
                   <button
@@ -166,7 +195,9 @@ export function SchedulesPage() {
 
             <div className="flex gap-2">
               <Button type="submit">Create schedule</Button>
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                Cancel
+              </Button>
             </div>
           </form>
         </div>
@@ -216,16 +247,22 @@ export function SchedulesPage() {
                 <div className="flex gap-1">
                   <Button variant="outline" size="sm" onClick={() => toggle(s)}>
                     {s.is_active ? (
-                      <><Pause className="mr-1.5 h-3 w-3" />Pause</>
+                      <>
+                        <Pause className="mr-1.5 h-3 w-3" />
+                        Pause
+                      </>
                     ) : (
-                      <><Play className="mr-1.5 h-3 w-3" />Resume</>
+                      <>
+                        <Play className="mr-1.5 h-3 w-3" />
+                        Resume
+                      </>
                     )}
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     className="text-danger hover:bg-danger-soft"
-                    onClick={() => remove(s.id)}
+                    onClick={() => setConfirmDelete(s)}
                   >
                     Delete
                   </Button>
@@ -235,6 +272,34 @@ export function SchedulesPage() {
           </ul>
         )}
       </div>
+
+      {confirmDelete && (
+        <Dialog
+          title="Delete this schedule?"
+          onClose={() => setConfirmDelete(null)}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const id = confirmDelete.id
+                  setConfirmDelete(null)
+                  remove(id)
+                }}
+              >
+                Delete schedule
+              </Button>
+            </>
+          }
+        >
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            It will stop running. Syncs it has already done stay in History.
+          </p>
+        </Dialog>
+      )}
     </div>
   )
 }

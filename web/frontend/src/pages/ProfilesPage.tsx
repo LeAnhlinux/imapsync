@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertCircle, ArrowRight, FolderSync, Lock, Plus, ShieldOff, X } from 'lucide-react'
 import { profileApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState, PageHeader, TableSkeleton } from '@/components/ui/data'
@@ -280,32 +281,14 @@ export function ProfilesPage() {
       {/* Deleting a profile is not undoable, so it asks first and names what
           it is about to remove. */}
       {confirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setConfirmDelete(null)}
-            aria-label="Cancel"
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="relative w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-xl"
-          >
-            <h2 className="text-sm font-semibold">Delete this profile?</h2>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{confirmDelete.name}</span> and its
-              stored credentials will be removed. Jobs already run from it stay in History,
-              and any schedule that used it is removed with it.
-            </p>
-            {deleteError && (
-              <p
-                role="alert"
-                className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                {deleteError}
-              </p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
+        <Dialog
+          title="Delete this profile?"
+          onClose={() => {
+            setConfirmDelete(null)
+            setDeleteError('')
+          }}
+          footer={
+            <>
               <Button
                 variant="outline"
                 onClick={() => {
@@ -315,10 +298,26 @@ export function ProfilesPage() {
               >
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={doDelete}>Delete profile</Button>
-            </div>
-          </div>
-        </div>
+              <Button variant="destructive" onClick={doDelete}>
+                Delete profile
+              </Button>
+            </>
+          }
+        >
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">{confirmDelete.name}</span> and its
+            stored credentials will be removed. Jobs already run from it stay in History, and any
+            schedule that used it is removed with it.
+          </p>
+          {deleteError && (
+            <p
+              role="alert"
+              className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
+            >
+              {deleteError}
+            </p>
+          )}
+        </Dialog>
       )}
     </div>
   )

@@ -12,18 +12,8 @@ import {
 } from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
 import { StatusBadge } from '@/components/ui/badge'
-import {
-  EmptyState,
-  PageHeader,
-  Skeleton,
-  Stat,
-  Table,
-  Td,
-  Th,
-  Tr,
-  formatBytes,
-  formatDuration,
-} from '@/components/ui/data'
+import { EmptyState, PageHeader, Skeleton, Stat, Table, Td, Th, Tr } from '@/components/ui/data'
+import { formatBytes, formatDuration } from '@/lib/format'
 
 interface Stats {
   total_syncs: number
@@ -100,7 +90,11 @@ export function DashboardPage() {
             <Stat
               label="Success rate"
               value={`${(stats?.success_rate ?? 0).toFixed(1)}%`}
-              icon={stats && stats.failed > 0 ? XCircle : CheckCircle2}
+              // Icon and tone from the same condition. They disagreed, so a
+              // 95% rate with one failure drew a red X inside a green tile.
+              icon={
+                stats && stats.total_syncs > 0 && stats.success_rate < 90 ? XCircle : CheckCircle2
+              }
               tone={
                 !stats?.total_syncs ? 'default' : stats.success_rate >= 90 ? 'success' : 'danger'
               }

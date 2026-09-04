@@ -94,7 +94,7 @@ export function Th({
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
         align === 'left' && 'text-left',
-        className,
+        className
       )}
     >
       {children}
@@ -120,7 +120,7 @@ export function Td({
         align === 'right' && 'text-right',
         align === 'center' && 'text-center',
         mono && 'font-mono text-xs',
-        className,
+        className
       )}
     >
       {children}
@@ -140,11 +140,7 @@ export function Tr({
   return (
     <tr
       onClick={onClick}
-      className={cn(
-        'transition-colors hover:bg-subtle',
-        onClick && 'cursor-pointer',
-        className,
-      )}
+      className={cn('transition-colors hover:bg-subtle', onClick && 'cursor-pointer', className)}
     >
       {children}
     </tr>
@@ -172,9 +168,7 @@ export function EmptyState({
         </span>
       )}
       <p className="font-medium">{title}</p>
-      {description && (
-        <p className="text-sm text-muted-foreground mt-1 max-w-sm">{description}</p>
-      )}
+      {description && <p className="text-sm text-muted-foreground mt-1 max-w-sm">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )
@@ -229,31 +223,4 @@ export function Progress({ value, label }: { value: number; label?: string }) {
 
 /* ---------------------------------------------------------------- utils */
 
-export function formatBytes(bytes: number): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`
-}
-
-export function formatDateTime(value?: string | null): string {
-  if (!value) return '—'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString(undefined, {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
-}
-
 /** Compact duration between two timestamps, for "how long did this take". */
-export function formatDuration(from?: string | null, to?: string | null): string {
-  if (!from) return '—'
-  const start = new Date(from).getTime()
-  const end = to ? new Date(to).getTime() : Date.now()
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return '—'
-  const s = Math.floor((end - start) / 1000)
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
-}

@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, Loader2, Moon, Send, Sun, Trash2 } from 'lucide-react'
-import { historyApi, notificationApi, telegramApi, type Retention, type TelegramSettings, type TelegramStatus } from '@/lib/api'
+import {
+  historyApi,
+  notificationApi,
+  telegramApi,
+  type Retention,
+  type TelegramSettings,
+  type TelegramStatus,
+} from '@/lib/api'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
@@ -61,15 +68,28 @@ export function SettingsPage() {
   const { user } = useAuthStore()
 
   const [smtp, setSmtp] = useState({
-    smtp_host: '', smtp_port: 587, smtp_user: '', smtp_password: '',
-    from_email: '', to_email: '', notify_on_success: false, notify_on_failure: true,
+    smtp_host: '',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_password: '',
+    from_email: '',
+    to_email: '',
+    notify_on_success: false,
+    notify_on_failure: true,
   })
   const [saved, setSaved] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
 
   const [tg, setTg] = useState<TelegramSettings>({
-    enabled: false, has_token: false, allowed_chat_ids: '', user_id: null,
-    notify_on_success: true, notify_on_failure: true, notify_on_progress: true, progress_step: 25,
+    enabled: false,
+    has_token: false,
+    allowed_chat_ids: '',
+    user_id: null,
+    notify_on_success: true,
+    notify_on_failure: true,
+    notify_on_progress: true,
+    progress_step: 25,
   })
   const [tgToken, setTgToken] = useState('')
   const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null)
@@ -79,43 +99,58 @@ export function SettingsPage() {
   const [tgBusy, setTgBusy] = useState(false)
 
   const [ret, setRet] = useState<Retention>({
-    enabled: false, keep_days: 30, last_run_at: null, last_deleted: 0,
+    enabled: false,
+    keep_days: 30,
+    last_run_at: null,
+    last_deleted: 0,
   })
   const [retSaved, setRetSaved] = useState(false)
   const [retNotice, setRetNotice] = useState<string | null>(null)
   const [retBusy, setRetBusy] = useState(false)
 
   const refreshTgStatus = () => {
-    telegramApi.status().then((r) => setTgStatus(r.data)).catch(() => {})
+    telegramApi
+      .status()
+      .then((r) => setTgStatus(r.data))
+      .catch(() => {})
   }
 
   useEffect(() => {
-    notificationApi.get().then((r) => {
-      if (r.data) {
-        setSmtp({
-          smtp_host: r.data.smtp_host || '',
-          smtp_port: r.data.smtp_port || 587,
-          smtp_user: r.data.smtp_user || '',
-          smtp_password: '',
-          from_email: r.data.from_email || '',
-          to_email: r.data.to_email || '',
-          notify_on_success: r.data.notify_on_success,
-          notify_on_failure: r.data.notify_on_failure,
-        })
-      }
-    }).catch(() => {})
+    notificationApi
+      .get()
+      .then((r) => {
+        if (r.data) {
+          setSmtp({
+            smtp_host: r.data.smtp_host || '',
+            smtp_port: r.data.smtp_port || 587,
+            smtp_user: r.data.smtp_user || '',
+            smtp_password: '',
+            from_email: r.data.from_email || '',
+            to_email: r.data.to_email || '',
+            notify_on_success: r.data.notify_on_success,
+            notify_on_failure: r.data.notify_on_failure,
+          })
+        }
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
     if (!user?.is_admin) return
-    telegramApi.get().then((r) => {
-      setTg(r.data.user_id === null ? { ...r.data, user_id: user.id } : r.data)
-    }).catch(() => {})
+    telegramApi
+      .get()
+      .then((r) => {
+        setTg(r.data.user_id === null ? { ...r.data, user_id: user.id } : r.data)
+      })
+      .catch(() => {})
     refreshTgStatus()
   }, [user])
 
   useEffect(() => {
-    historyApi.getRetention().then((r) => setRet(r.data)).catch(() => {})
+    historyApi
+      .getRetention()
+      .then((r) => setRet(r.data))
+      .catch(() => {})
   }, [])
 
   const handleRetSave = async (e: React.FormEvent) => {
@@ -123,14 +158,17 @@ export function SettingsPage() {
     setRetNotice(null)
     setRetBusy(true)
     try {
-      const r = await historyApi.saveRetention({ enabled: ret.enabled, keep_days: ret.keep_days })
+      const r = await historyApi.saveRetention({
+        enabled: ret.enabled,
+        keep_days: ret.keep_days,
+      })
       setRet(r.data)
       setRetSaved(true)
       setTimeout(() => setRetSaved(false), 2000)
     } catch (err: unknown) {
       setRetNotice(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not save the policy.',
+          'Could not save the policy.'
       )
     } finally {
       setRetBusy(false)
@@ -145,13 +183,16 @@ export function SettingsPage() {
       setRetNotice(
         r.data.deleted === 0
           ? 'Nothing was old enough to remove.'
-          : `Removed ${r.data.deleted} job(s) and their logs.`,
+          : `Removed ${r.data.deleted} job(s) and their logs.`
       )
-      historyApi.getRetention().then((x) => setRet(x.data)).catch(() => {})
+      historyApi
+        .getRetention()
+        .then((x) => setRet(x.data))
+        .catch(() => {})
     } catch (err: unknown) {
       setRetNotice(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not run the cleanup.',
+          'Could not run the cleanup.'
       )
     } finally {
       setRetBusy(false)
@@ -160,18 +201,43 @@ export function SettingsPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
+    setTestResult(null)
     const data: Record<string, unknown> = { ...smtp }
     // An untouched password field means "keep the stored one".
     if (!smtp.smtp_password) delete data.smtp_password
-    await notificationApi.update(data)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      await notificationApi.update(data)
+      setDirty(false)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (err: unknown) {
+      // Unhandled, this failed silently: the button stayed on "Save" and the
+      // user had no reason to think the settings had not been stored.
+      setTestResult(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not save these settings.'
+      )
+    }
   }
 
   const handleTest = async () => {
+    // The endpoint reads the *stored* settings, but the button was enabled by
+    // the *typed* host. Someone who fixed a broken SMTP host and pressed Test
+    // before Save was told the old host worked.
     setTestResult(null)
-    const res = await notificationApi.test()
-    setTestResult(res.data.status === 'ok' ? 'Test email sent.' : 'Could not send the test email.')
+    try {
+      const res = await notificationApi.test()
+      setTestResult(
+        res.data.status === 'ok'
+          ? 'Test email sent.'
+          : res.data.detail || 'Could not send the test email.'
+      )
+    } catch (err: unknown) {
+      setTestResult(
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          'Could not send the test email.'
+      )
+    }
   }
 
   const handleTgSave = async (e: React.FormEvent) => {
@@ -200,7 +266,7 @@ export function SettingsPage() {
     } catch (err: unknown) {
       setTgError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not save the settings.',
+          'Could not save the settings.'
       )
     } finally {
       setTgBusy(false)
@@ -215,7 +281,7 @@ export function SettingsPage() {
       setTgTest(
         r.data.status === 'ok'
           ? `Test message sent. ${r.data.detail || ''}`
-          : `Failed: ${r.data.detail || ''}`,
+          : `Failed: ${r.data.detail || ''}`
       )
     } catch {
       setTgTest('Could not send the test message.')
@@ -250,9 +316,15 @@ export function SettingsPage() {
           </p>
           <Button variant="outline" size="sm" onClick={toggle}>
             {theme === 'light' ? (
-              <><Moon className="mr-1.5 h-4 w-4" />Switch to dark</>
+              <>
+                <Moon className="mr-1.5 h-4 w-4" />
+                Switch to dark
+              </>
             ) : (
-              <><Sun className="mr-1.5 h-4 w-4" />Switch to light</>
+              <>
+                <Sun className="mr-1.5 h-4 w-4" />
+                Switch to light
+              </>
             )}
           </Button>
         </div>
@@ -316,7 +388,8 @@ export function SettingsPage() {
 
           {ret.last_run_at && (
             <p className="text-xs text-muted-foreground">
-              Last run {new Date(ret.last_run_at).toLocaleString()} — removed {ret.last_deleted} job(s).
+              Last run {new Date(ret.last_run_at).toLocaleString()} — removed {ret.last_deleted}{' '}
+              job(s).
             </p>
           )}
 
@@ -349,7 +422,10 @@ export function SettingsPage() {
               <Input
                 id="smtp_host"
                 value={smtp.smtp_host}
-                onChange={(e) => setSmtp({ ...smtp, smtp_host: e.target.value })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, smtp_host: e.target.value })
+                  setDirty(true)
+                }}
                 placeholder="smtp.gmail.com"
               />
             </Field>
@@ -358,14 +434,20 @@ export function SettingsPage() {
                 id="smtp_port"
                 type="number"
                 value={smtp.smtp_port}
-                onChange={(e) => setSmtp({ ...smtp, smtp_port: Number(e.target.value) })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, smtp_port: Number(e.target.value) })
+                  setDirty(true)
+                }}
               />
             </Field>
             <Field label="SMTP user" htmlFor="smtp_user">
               <Input
                 id="smtp_user"
                 value={smtp.smtp_user}
-                onChange={(e) => setSmtp({ ...smtp, smtp_user: e.target.value })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, smtp_user: e.target.value })
+                  setDirty(true)
+                }}
                 autoComplete="off"
               />
             </Field>
@@ -378,7 +460,10 @@ export function SettingsPage() {
                 id="smtp_password"
                 type="password"
                 value={smtp.smtp_password}
-                onChange={(e) => setSmtp({ ...smtp, smtp_password: e.target.value })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, smtp_password: e.target.value })
+                  setDirty(true)
+                }}
                 autoComplete="new-password"
               />
             </Field>
@@ -387,7 +472,10 @@ export function SettingsPage() {
                 id="from_email"
                 type="email"
                 value={smtp.from_email}
-                onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, from_email: e.target.value })
+                  setDirty(true)
+                }}
               />
             </Field>
             <Field label="Send to" htmlFor="to_email">
@@ -395,7 +483,10 @@ export function SettingsPage() {
                 id="to_email"
                 type="email"
                 value={smtp.to_email}
-                onChange={(e) => setSmtp({ ...smtp, to_email: e.target.value })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, to_email: e.target.value })
+                  setDirty(true)
+                }}
               />
             </Field>
           </div>
@@ -405,7 +496,10 @@ export function SettingsPage() {
               <input
                 type="checkbox"
                 checked={smtp.notify_on_success}
-                onChange={(e) => setSmtp({ ...smtp, notify_on_success: e.target.checked })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, notify_on_success: e.target.checked })
+                  setDirty(true)
+                }}
                 className="h-4 w-4"
               />
               Notify on success
@@ -414,7 +508,10 @@ export function SettingsPage() {
               <input
                 type="checkbox"
                 checked={smtp.notify_on_failure}
-                onChange={(e) => setSmtp({ ...smtp, notify_on_failure: e.target.checked })}
+                onChange={(e) => {
+                  setSmtp({ ...smtp, notify_on_failure: e.target.checked })
+                  setDirty(true)
+                }}
                 className="h-4 w-4"
               />
               Notify on failure
@@ -423,10 +520,21 @@ export function SettingsPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit">{saved ? 'Saved' : 'Save'}</Button>
-            <Button type="button" variant="outline" onClick={handleTest} disabled={!smtp.smtp_host}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleTest}
+              disabled={!smtp.smtp_host || dirty}
+              title={dirty ? 'Save first — the test uses the stored settings' : undefined}
+            >
               <Send className="mr-1.5 h-4 w-4" />
               Send test email
             </Button>
+            {dirty && (
+              <p className="text-sm text-muted-foreground">
+                Save first — the test sends with the stored settings.
+              </p>
+            )}
             {testResult && <p className="text-sm text-muted-foreground">{testResult}</p>}
           </div>
         </form>
@@ -439,20 +547,27 @@ export function SettingsPage() {
           aside={
             tgStatus?.running ? (
               <Badge tone="success" dot>
-                Running{tgStatus.bot_username ? ` as @${tgStatus.bot_username}` : ''}
+                Running
+                {tgStatus.bot_username ? ` as @${tgStatus.bot_username}` : ''}
               </Badge>
             ) : tgStatus?.error ? (
-              <Badge tone="danger" dot>Error</Badge>
+              <Badge tone="danger" dot>
+                Error
+              </Badge>
             ) : (
-              <Badge tone="neutral" dot>Stopped</Badge>
+              <Badge tone="neutral" dot>
+                Stopped
+              </Badge>
             )
           }
         >
           <form onSubmit={handleTgSave} className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Get a token from <code className="rounded bg-subtle px-1 py-0.5 font-mono text-xs">@BotFather</code>,
-              then message <code className="rounded bg-subtle px-1 py-0.5 font-mono text-xs">@userinfobot</code> for
-              your chat id.
+              Get a token from{' '}
+              <code className="rounded bg-subtle px-1 py-0.5 font-mono text-xs">@BotFather</code>,
+              then message{' '}
+              <code className="rounded bg-subtle px-1 py-0.5 font-mono text-xs">@userinfobot</code>{' '}
+              for your chat id.
             </p>
 
             <Field
@@ -557,9 +672,11 @@ export function SettingsPage() {
               <p className="font-mono text-xs">
                 /profiles /sync &lt;id&gt; /jobs /status &lt;id&gt; /stop &lt;id&gt; /history
               </p>
-              <p className="mt-2">Sync a single mailbox without a profile — a space separates the two sides:</p>
+              <p className="mt-2">
+                Sync a single mailbox without a profile — a space separates the two sides:
+              </p>
               <pre className="mt-1 overflow-x-auto rounded bg-subtle p-2 font-mono text-xs">
-{`/run old.com;me@old.com;pw new.com;me@new.com;pw`}
+                {`/run old.com;me@old.com;pw new.com;me@new.com;pw`}
               </pre>
               <p className="mt-2">
                 Or send a .csv with caption <code className="font-mono text-xs">/batch</code>, then{' '}

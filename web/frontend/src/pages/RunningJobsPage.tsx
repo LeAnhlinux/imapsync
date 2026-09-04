@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Inbox, Square } from 'lucide-react'
 import { syncApi } from '@/lib/api'
 import { useJobWebSocket } from '@/lib/ws'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/ui/badge'
-import {
-  EmptyState,
-  PageHeader,
-  Progress,
-  formatBytes,
-  formatDuration,
-} from '@/components/ui/data'
+import { EmptyState, PageHeader, Progress } from '@/components/ui/data'
+import { formatBytes, formatDuration } from '@/lib/format'
 
 interface Job {
   id: number
@@ -27,17 +22,36 @@ interface Job {
 
 export function RunningJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
+  // New Sync navigates here with ?highlight=<id>. Nothing read it, so a sync
+  // that failed within a second landed on "Nothing running" with no hint that
+  // it had run at all, let alone failed.
+  const [params] = useSearchParams()
+  const highlightId = Number(params.get('highlight')) || null
+  const [highlighted, setHighlighted] = useState<Job | null>(null)
   const [open, setOpen] = useState<number | null>(null)
   const [aborting, setAborting] = useState<number | null>(null)
 
   useEffect(() => {
     const load = () => {
-      syncApi.running().then((r) => setJobs(r.data)).catch(() => {})
+      syncApi
+        .running()
+        .then((r) => setJobs(r.data))
+        .catch(() => {})
     }
     load()
     const interval = setInterval(load, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  // Fetch the job we were sent here to watch. If it is in the running list this
+  // is redundant; if it already failed, this is the only thing that will say so.
+  useEffect(() => {
+    if (!highlightId) return
+    syncApi
+      .get(highlightId)
+      .then((r) => setHighlighted(r.data))
+      .catch(() => setHighlighted(null))
+  }, [highlightId, jobs.length])
 
   const abort = async (id: number) => {
     setAborting(id)
@@ -55,6 +69,33 @@ export function RunningJobsPage() {
         title="Running Jobs"
         description="Live progress and output for syncs in flight."
       />
+
+      {highlighted && highlighted.status !== 'running' && (
+        <div className="mb-4 rounded-lg border border-border bg-card p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge status={highlighted.status} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                Job #{highlighted.id} — {highlighted.source_account ?? '—'}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                → {highlighted.dest_account ?? '—'}
+              </p>
+            </div>
+            <Link
+              to="/history"
+              className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
+            >
+              Open in History
+            </Link>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {highlighted.status === 'completed'
+              ? 'It finished before this page loaded.'
+              : 'It stopped before this page loaded — open it in History for the log.'}
+          </p>
+        </div>
+      )}
 
       {jobs.length === 0 ? (
         <div className="rounded-lg border border-border bg-card">
@@ -123,7 +164,8 @@ export function RunningJobsPage() {
                     PID <span className="tabular font-mono">{job.pid ?? '—'}</span>
                   </span>
                   <span>
-                    Messages <span className="tabular">{job.messages_transferred.toLocaleString()}</span>
+                    Messages{' '}
+                    <span className="tabular">{job.messages_transferred.toLocaleString()}</span>
                   </span>
                   <span>
                     Data <span className="tabular">{formatBytes(job.bytes_transferred)}</span>

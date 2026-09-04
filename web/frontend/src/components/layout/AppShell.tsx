@@ -59,6 +59,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Navigating closes the drawer; leaving it open hides the page just asked for.
+  // This is exactly the "reset state when a prop changes" case React documents,
+  // and the alternative -- a key on the drawer -- would remount it mid-animation.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setMobileOpen(false), [location.pathname])
 
   const handleLogout = () => {
@@ -107,7 +110,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       'relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
                       active
                         ? 'bg-primary-soft font-medium text-primary'
-                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                        : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                     )}
                   >
                     {active && (

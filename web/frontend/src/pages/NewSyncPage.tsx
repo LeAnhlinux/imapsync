@@ -4,7 +4,8 @@ import { AlertCircle, ArrowRight, Check, FolderSearch, Loader2, PlayCircle } fro
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { PageHeader, formatBytes } from '@/components/ui/data'
+import { PageHeader } from '@/components/ui/data'
+import { formatBytes } from '@/lib/format'
 import { folderApi, profileApi, syncApi, type FolderInfo } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -53,7 +54,12 @@ export function NewSyncPage() {
   const [browsing, setBrowsing] = useState(false)
   const [browseError, setBrowseError] = useState('')
 
-  const chosen = new Set(foldersText.split('\n').map((f) => f.trim()).filter(Boolean))
+  const chosen = new Set(
+    foldersText
+      .split('\n')
+      .map((f) => f.trim())
+      .filter(Boolean)
+  )
 
   const toggleFolder = (name: string) => {
     const next = new Set(chosen)
@@ -77,7 +83,7 @@ export function NewSyncPage() {
     } catch (err: unknown) {
       setBrowseError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not list the folders.',
+          'Could not list the folders.'
       )
     } finally {
       setBrowsing(false)
@@ -85,7 +91,10 @@ export function NewSyncPage() {
   }
 
   useEffect(() => {
-    profileApi.list().then((r) => setProfiles(r.data)).catch(() => {})
+    profileApi
+      .list()
+      .then((r) => setProfiles(r.data))
+      .catch(() => {})
   }, [])
 
   const pickProfile = (id: number | null) => {
@@ -112,14 +121,16 @@ export function NewSyncPage() {
   // With a profile chosen the credentials come from the server, so the form
   // only needs to be complete when there is no profile behind it.
   const credentialsReady =
-    selectedProfile !== null ||
-    (host1 && user1 && password1 && host2 && user2 && password2)
+    selectedProfile !== null || (host1 && user1 && password1 && host2 && user2 && password2)
 
   const start = async () => {
     setLoading(true)
     setError('')
     try {
-      const folders = foldersText.split('\n').map((f) => f.trim()).filter(Boolean)
+      const folders = foldersText
+        .split('\n')
+        .map((f) => f.trim())
+        .filter(Boolean)
       // Send the off state too, not just the on state. A profile can have
       // usecache saved as on, and "unticked" has to be able to override that —
       // omitting the key just means "whatever the profile says", which is how
@@ -130,13 +141,25 @@ export function NewSyncPage() {
       else extra_options.nousecache = true
       const data = selectedProfile
         ? { profile_id: selectedProfile, dry_run: dryRun, folders, extra_options }
-        : { host1, user1, password1, ssl1, host2, user2, password2, ssl2, dry_run: dryRun, folders, extra_options }
+        : {
+            host1,
+            user1,
+            password1,
+            ssl1,
+            host2,
+            user2,
+            password2,
+            ssl2,
+            dry_run: dryRun,
+            folders,
+            extra_options,
+          }
       const res = await syncApi.start(data)
       navigate(`/jobs?highlight=${res.data.id}`)
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not start the sync.',
+          'Could not start the sync.'
       )
     } finally {
       setLoading(false)
@@ -154,7 +177,9 @@ export function NewSyncPage() {
         </p>
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`h${which}`}>Host</label>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`h${which}`}>
+              Host
+            </label>
             <Input
               id={`h${which}`}
               value={isSource ? host1 : host2}
@@ -164,7 +189,9 @@ export function NewSyncPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`u${which}`}>Username</label>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`u${which}`}>
+              Username
+            </label>
             <Input
               id={`u${which}`}
               value={isSource ? user1 : user2}
@@ -175,7 +202,9 @@ export function NewSyncPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`p${which}`}>Password</label>
+            <label className="mb-1 block text-sm font-medium" htmlFor={`p${which}`}>
+              Password
+            </label>
             <Input
               id={`p${which}`}
               type="password"
@@ -218,17 +247,12 @@ export function NewSyncPage() {
                   'grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-medium',
                   done && 'bg-primary text-primary-foreground',
                   current && 'bg-primary-soft text-primary ring-2 ring-primary',
-                  !done && !current && 'bg-subtle text-muted-foreground',
+                  !done && !current && 'bg-subtle text-muted-foreground'
                 )}
               >
                 {done ? <Check className="h-3 w-3" /> : i + 1}
               </span>
-              <span
-                className={cn(
-                  'text-sm',
-                  current ? 'font-medium' : 'text-muted-foreground',
-                )}
-              >
+              <span className={cn('text-sm', current ? 'font-medium' : 'text-muted-foreground')}>
                 {s.label}
               </span>
               {i < STEPS.length - 1 && (
@@ -258,7 +282,9 @@ export function NewSyncPage() {
                 >
                   <option value="">Enter credentials manually…</option>
                   {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
                   ))}
                 </select>
                 {selectedProfile !== null && (
@@ -329,7 +355,13 @@ export function NewSyncPage() {
                 <label className="text-sm font-medium" htmlFor="folders">
                   Folders <span className="font-normal text-muted-foreground">(optional)</span>
                 </label>
-                <Button type="button" variant="outline" size="sm" onClick={browse} disabled={browsing}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={browse}
+                  disabled={browsing}
+                >
                   {browsing ? (
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                   ) : (
@@ -346,7 +378,9 @@ export function NewSyncPage() {
                 </p>
               )}
               {browseError && (
-                <p role="alert" className="mb-2 text-xs text-danger">{browseError}</p>
+                <p role="alert" className="mb-2 text-xs text-danger">
+                  {browseError}
+                </p>
               )}
 
               {available && available.length > 0 && (

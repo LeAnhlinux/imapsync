@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, PlayCircle, Square, Upload } from 'lucide-react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileSpreadsheet,
+  Loader2,
+  PlayCircle,
+  Square,
+  Upload,
+} from 'lucide-react'
 import { batchApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Badge, StatusBadge } from '@/components/ui/badge'
@@ -38,9 +46,12 @@ export function BatchImportPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Leaving the page mid-run must not leave a timer firing forever.
-  useEffect(() => () => {
-    if (pollRef.current) clearInterval(pollRef.current)
-  }, [])
+  useEffect(
+    () => () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    },
+    []
+  )
 
   const upload = async () => {
     setLoading(true)
@@ -60,7 +71,7 @@ export function BatchImportPage() {
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not read that CSV.',
+          'Could not read that CSV.'
       )
     } finally {
       setLoading(false)
@@ -88,7 +99,7 @@ export function BatchImportPage() {
           misses += 1
           if (misses >= 3) {
             setPollWarning(
-              'Lost contact with the server. The batch is probably still running — reload to check.',
+              'Lost contact with the server. The batch is probably still running — reload to check.'
             )
             if (pollRef.current) clearInterval(pollRef.current)
           }
@@ -97,7 +108,7 @@ export function BatchImportPage() {
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not start the batch.',
+          'Could not start the batch.'
       )
     } finally {
       setLoading(false)
@@ -113,7 +124,7 @@ export function BatchImportPage() {
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-          'Could not stop the batch.',
+          'Could not stop the batch.'
       )
     } finally {
       setLoading(false)
@@ -250,11 +261,12 @@ export function BatchImportPage() {
             <button
               key={m}
               onClick={() => setMode(m)}
+              aria-pressed={mode === m}
               className={cn(
                 'rounded-md px-3 py-1.5 text-sm transition-colors',
                 mode === m
                   ? 'bg-primary-soft font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-accent',
+                  : 'text-muted-foreground hover:bg-accent'
               )}
             >
               {m === 'paste' ? 'Paste rows' : 'Upload file'}
@@ -294,9 +306,21 @@ export function BatchImportPage() {
                 if (f) setFile(f)
               }}
               onClick={() => document.getElementById('csv-input')?.click()}
+              // A div with onClick and a hidden input is unreachable by
+              // keyboard, so the whole "Upload file" tab was mouse-only.
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  document.getElementById('csv-input')?.click()
+                }
+              }}
+              aria-label="Choose a CSV file, or drop one here"
               className={cn(
                 'cursor-pointer rounded-lg border-2 border-dashed p-8 text-center transition-colors',
-                dragging ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary',
+                'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+                dragging ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary'
               )}
             >
               <input
@@ -333,11 +357,36 @@ export function BatchImportPage() {
         <p className="mb-3 text-sm font-medium">Applies to every row</p>
         <div className="grid gap-2.5 sm:grid-cols-2">
           {[
-            { v: dryRun, set: setDryRun, label: 'Dry run', hint: 'Report only, write nothing' },
-            { v: automap, set: setAutomap, label: 'Automap folders', hint: 'Match Sent/Drafts/Trash' },
-            { v: usecache, set: setUsecache, label: 'Use cache', hint: 'Skip already-copied messages' },
-            { v: ssl1, set: setSsl1, label: 'TLS on source', hint: 'Encrypt the source connection' },
-            { v: ssl2, set: setSsl2, label: 'TLS on destination', hint: 'Encrypt the destination' },
+            {
+              v: dryRun,
+              set: setDryRun,
+              label: 'Dry run',
+              hint: 'Report only, write nothing',
+            },
+            {
+              v: automap,
+              set: setAutomap,
+              label: 'Automap folders',
+              hint: 'Match Sent/Drafts/Trash',
+            },
+            {
+              v: usecache,
+              set: setUsecache,
+              label: 'Use cache',
+              hint: 'Skip already-copied messages',
+            },
+            {
+              v: ssl1,
+              set: setSsl1,
+              label: 'TLS on source',
+              hint: 'Encrypt the source connection',
+            },
+            {
+              v: ssl2,
+              set: setSsl2,
+              label: 'TLS on destination',
+              hint: 'Encrypt the destination',
+            },
           ].map((o) => (
             <label key={o.label} className="flex items-start gap-2.5 text-sm">
               <input
