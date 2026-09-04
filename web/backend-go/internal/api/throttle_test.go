@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -67,5 +68,30 @@ func TestCSVUploadLimitMatchesTheProxy(t *testing.T) {
 	}
 	if maxJSONBody >= maxCSVUpload {
 		t.Error("the JSON body cap should be well under the CSV cap")
+	}
+}
+
+func TestAnOversizedBodyIsRefusedCleanly(t *testing.T) {
+	// The point is a 413 the caller can act on, not a reset connection that the
+	// proxy reports as 502.
+	e := newTestEnv(t)
+	big := strings.Repeat("x", maxJSONBody+1024)
+	body := `{"username":"` + big + `","password":"x"}`
+
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(len(body))
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("got %d, want 413", rec.Code)
+	}
+	// And the throttle must not have retained the giant username.
+	loginThrottle.mu.Lock()
+	n := len(loginThrottle.attempts)
+	loginThrottle.mu.Unlock()
+	if n != 0 {
+		t.Errorf("the throttle kept %d entries from a rejected request", n)
 	}
 }

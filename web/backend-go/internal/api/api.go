@@ -219,7 +219,22 @@ func writeError(w http.ResponseWriter, code int, detail string) {
 const maxJSONBody = 1 << 20 // 1 MiB
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	return decodeJSONLimit(w, r, dst, maxJSONBody)
+}
+
+// decodeJSONLimit is decodeJSON with a different ceiling, for the one endpoint
+// that legitimately carries a large body: a pasted batch CSV.
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	// Refuse on the declared length first. MaxBytesReader alone answers 413 but
+	// then resets the connection while the client is still sending, which the
+	// proxy in front reports as a 502 — a confusing answer to a request that
+	// was correctly rejected. nginx buffers and always sets Content-Length, so
+	// this is the path that actually runs in production.
+	if r.ContentLength > limit {
+		writeError(w, http.StatusRequestEntityTooLarge, "Request body is too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {

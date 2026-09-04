@@ -46,7 +46,9 @@ func (s *Server) batchUploadText(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		CSVText string `json:"csv_text"`
 	}
-	if !decodeJSON(w, r, &b) {
+	// A pasted CSV is the one JSON body that is legitimately large; the nginx
+	// location for /api/batch/upload allows the matching size.
+	if !decodeJSONLimit(w, r, &b, maxCSVUpload) {
 		return
 	}
 	s.createBatch(w, r, b.CSVText, "paste.csv")

@@ -19,8 +19,30 @@ server {
 
     server_tokens off;
 
-    # API + WebSocket proxy
+    # Batch CSV upload — the one endpoint group that takes a large body. Keep
+    # this in step with maxCSVUpload in the backend. The prefix covers both
+    # /api/batch/upload (multipart) and /api/batch/upload-text (JSON).
+    location /api/batch/upload {
+        client_max_body_size 20M;
+
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+    }
+
+    # Everything else. The limit is enforced here rather than only in the
+    # backend: when the backend rejects an oversized body it answers 413 and
+    # closes, but nginx is still writing the body it buffered, so it sees a
+    # broken pipe, discards the 413 and reports 502 instead. Refusing at the
+    # proxy gives the caller the right status.
     location /api/ {
+        client_max_body_size 1M;
+
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -60,8 +82,6 @@ server {
     add_header Content-Security-Policy
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
 
-    # Batch CSV upload. Keep this in step with maxCSVUpload in the backend:
-    # nginx used to allow 50M while the reader truncated at 16MiB without
-    # saying so, which silently dropped mailboxes from a large batch.
-    client_max_body_size 20M;
+    # Static files and the SPA shell need nothing large.
+    client_max_body_size 1M;
 }
