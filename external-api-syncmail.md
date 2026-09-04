@@ -98,6 +98,20 @@ Header names are case-insensitive per HTTP; the server emits them as
 Note that requests rejected for a missing scope still consume budget — the
 limit is checked before the scope.
 
+`POST /api/auth/login` is throttled separately, per client address and
+username: ten failed attempts in five minutes gives **429** with a plain
+message and no `X-Ratelimit-*` headers.
+
+```json
+{ "detail": "Too many failed login attempts. Try again in a few minutes." }
+```
+
+### Request size
+
+JSON bodies are capped at 1 MiB and the batch CSV endpoints at 16 MiB; over
+either is **413**. The proxy in front enforces the same limits, so an oversized
+body is refused before it reaches the application.
+
 ### Errors
 
 Errors always carry a `detail` string:
@@ -148,7 +162,7 @@ Or pass credentials directly:
 
 | Field | Type | Notes |
 |---|---|---|
-| `profile_id` | int | if set, credential fields are ignored |
+| `profile_id` | int | if set, credential fields are ignored; `extra_options` is merged over the profile's saved options for this run |
 | `host1/user1/password1` | string | source mailbox; all required without a profile |
 | `host2/user2/password2` | string | destination mailbox |
 | `ssl1`, `ssl2` | bool | default `true` |
@@ -417,7 +431,8 @@ Returns a **pending** batch. Nothing runs until you start it:
 
 | Method | Path | Scope | Purpose |
 |---|---|---|---|
-| POST | `/api/batch/{id}/start` | `batch:write` | begin running |
+| POST | `/api/batch/{id}/start` | `batch:write` | begin running; **409** if it already is |
+| POST | `/api/batch/{id}/abort` | `batch:write` | stop it; aborts the mailbox in flight and skips the rest |
 | GET | `/api/batch/{id}` | `sync:read` | poll `completed_rows` / `failed_rows` |
 
 Each row becomes an ordinary sync job, so webhooks fire per mailbox.
@@ -634,6 +649,7 @@ The API takes mailbox passwords, so:
 | POST | `/api/batch/upload` | `batch:write` |
 | POST | `/api/batch/upload-text` | `batch:write` |
 | POST | `/api/batch/{id}/start` | `batch:write` |
+| POST | `/api/batch/{id}/abort` | `batch:write` |
 | GET | `/api/batch/{id}` | `sync:read` |
 | GET | `/api/schedules` | `schedules:read` |
 | POST | `/api/schedules` | `schedules:write` |
