@@ -213,8 +213,19 @@ func writeError(w http.ResponseWriter, code int, detail string) {
 	writeJSON(w, code, map[string]string{"detail": detail})
 }
 
+// maxJSONBody caps a request body. nginx allows 50 MB so that batch CSV
+// uploads fit, but no JSON endpoint has any use for that, and an unbounded
+// decode let an unauthenticated caller hand the login throttle a 40 MB key.
+const maxJSONBody = 1 << 20 // 1 MiB
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Request body is too large")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "Invalid JSON body")
 		return false
 	}

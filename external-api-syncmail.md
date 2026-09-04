@@ -214,9 +214,9 @@ against an allowlist. Anything else is a **400** naming what was rejected:
 `delete1`, `delete2`, `delete2duplicates`, `expunge1`, `expunge2`,
 `noexpunge1`, `noexpunge2`, `justfolders`, `justfoldersizes`, `justconnect`,
 `justlogin`, `justbanner`, `gmail1`, `gmail2`, `office1`, `office2`,
-`exchange1`, `exchange2`, `domino1`, `domino2`, `condstore`, `nocondstore`
+`exchange1`, `exchange2`, `domino1`, `domino2`
 
-**Integers**: `parallel`, `batchsize`, `pipeline`, `maxage`, `minage`,
+**Integers**: `maxage`, `minage`,
 `maxsize`, `minsize`, `maxmessagespersecond`, `maxbytespersecond`, `timeout`,
 `timeout1`, `timeout2`, `port1`, `port2`
 
@@ -228,6 +228,17 @@ against an allowlist. Anything else is a **400** naming what was rejected:
 password, ssl, tmpdir, pidfile and logfile are managed by the server — allowing
 them would let a caller redirect credentials or overwrite files. `debugimap`
 prints the IMAP dialogue, including the login line.
+
+`parallel`, `pipeline`, `batchsize` and `condstore` are this fork's own
+additions and are **not** accepted here. A review of what they do found that
+`--parallel` rebuilds the worker command line by hand and passes
+`--password1 <plaintext>`, putting both mailbox passwords in `ps` output for
+the length of the run, while dropping `maxage`, `exclude`, `port` and
+`automap` and leaving workers that abort cannot reach; `--pipeline` fetches
+message bodies with a different IMAP method than the normal path, and nobody
+has shown the two produce identical bytes; `--condstore` writes a cache that
+nothing reads. They remain available to whoever runs `imapsync` directly on
+the command line.
 
 `delete1` and `delete2` **are** allowed: deleting from the source after a
 migration is a legitimate use, and the credentials are yours. Be deliberate.

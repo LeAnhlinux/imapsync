@@ -17,7 +17,7 @@ func TestSanitizeOptions(t *testing.T) {
 		{"option injection", map[string]any{"folder": "--pipemess"}, 0, "folder"},
 		{"shell in int", map[string]any{"maxage": "30; rm -rf /"}, 0, "maxage"},
 		{"regex code", map[string]any{"include": `(?{system("id")})`}, 0, "include"},
-		{"numbers ok", map[string]any{"maxage": 30, "parallel": 4}, 2, ""},
+		{"numbers ok", map[string]any{"maxage": 30, "timeout": 120}, 2, ""},
 		{"false flag dropped", map[string]any{"usecache": false}, 0, ""},
 	}
 	for _, c := range cases {
@@ -42,4 +42,37 @@ func TestValidateCron(t *testing.T) {
 	if err := ValidateCron("bad cron"); err == nil {
 		t.Error("invalid expression accepted")
 	}
+}
+
+func TestForkOptionsAreNotReachableFromTheWeb(t *testing.T) {
+	// Each of these is a real defect, not a style preference: --parallel puts
+	// both mailbox passwords into ps, --pipeline may append a different message
+	// body than a plain run, --batchsize changes which fetches are issued, and
+	// --condstore does nothing at all. A web request must not be able to ask for
+	// any of them.
+	safe, rejected := SanitizeOptions(map[string]any{
+		"parallel": 4, "pipeline": 20, "batchsize": 500,
+		"condstore": true, "nocondstore": true,
+		"automap": true, // a legitimate one, to prove the map still works
+	})
+	for _, k := range []string{"parallel", "pipeline", "batchsize", "condstore", "nocondstore"} {
+		if _, ok := safe[k]; ok {
+			t.Errorf("%q reached imapsync's argv", k)
+		}
+		if !contains(rejected, k) {
+			t.Errorf("%q was dropped without telling the caller", k)
+		}
+	}
+	if safe["automap"] != true {
+		t.Error("a legitimate option was dropped along with them")
+	}
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

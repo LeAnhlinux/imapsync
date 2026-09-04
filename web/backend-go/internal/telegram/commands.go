@@ -29,7 +29,7 @@ func (b *Bot) dispatch(ctx context.Context, cfg config, msg *message) string {
 
 	if msg.Document != nil {
 		if command != "" && command != "/batch" {
-			return "I only accept files with the /batch caption. Got: " + command
+			return "I only accept files with /batch as the caption."
 		}
 		return b.cmdBatchUpload(ctx, cfg, msg)
 	}
@@ -82,7 +82,10 @@ func (b *Bot) dispatch(ctx context.Context, cfg config, msg *message) string {
 		}
 		return b.cmdBatchGo(cfg, id)
 	}
-	return fmt.Sprintf("Unknown command: %s\n\n%s", command, helpText)
+	// The command word is not echoed. Someone who forgets the leading "/run"
+	// sends "mail.com;bob;hunter2 ..." as their first token, and this reply is
+	// a bot message -- it is never deleted.
+	return "I do not recognise that command.\n\n" + helpText
 }
 
 func (b *Bot) cmdProfiles(cfg config) string {

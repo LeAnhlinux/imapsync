@@ -1,6 +1,9 @@
 package telegram
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseRun(t *testing.T) {
 	cases := []struct{ name, in, wantFrom, wantErr string }{
@@ -58,4 +61,46 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// A syntax error reply is a message from the bot. The bot deletes the user's
+// message but cannot delete its own, so anything quoted back into an error
+// stays in the chat for good -- right after the bot has said it removed the
+// credentials. Both of these inputs used to echo the password verbatim.
+func TestRunErrorsNeverQuoteTheInput(t *testing.T) {
+	const pw = "S3cr3t-do-not-print"
+
+	for _, in := range []string{
+		// A password containing ';' -- the most likely way to get here.
+		"a.com;me@a.com;" + pw + ";extra b.com;me@b.com;pw2",
+		"from: a.com;me@a.com;" + pw + ";x\nto: b.com;me@b.com;pw2",
+		// A mislabelled line: the label regex fails and the whole line was echoed.
+		"from a.com;me@a.com;" + pw + "\nto: b.com;me@b.com;pw2",
+		// Too few fields.
+		"a.com;" + pw + " b.com;me@b.com;pw2",
+		// Junk that still carries a credential.
+		"garbage " + pw,
+	} {
+		_, err := parseRun(in)
+		if err == nil {
+			continue // parsed fine; nothing to leak
+		}
+		if strings.Contains(err.Error(), pw) {
+			t.Errorf("the reply quotes the password.\n input: %q\n reply: %s", in, err.Error())
+		}
+	}
+}
+
+func TestRunErrorsStillSayWhatIsWrong(t *testing.T) {
+	// Removing the echo must not reduce the message to "invalid input".
+	_, err := parseRun("a.com;me@a.com;p;a;s;s b.com;me@b.com;pw2")
+	if err == nil {
+		t.Fatal("expected a syntax error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"source", "field", "';'"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the reply no longer mentions %q; got:\n%s", want, msg)
+		}
+	}
 }

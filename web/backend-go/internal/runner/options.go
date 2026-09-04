@@ -45,9 +45,24 @@ var allowed = map[string]string{
 	// server presets
 	"gmail1": kindFlag, "gmail2": kindFlag, "office1": kindFlag, "office2": kindFlag,
 	"exchange1": kindFlag, "exchange2": kindFlag, "domino1": kindFlag, "domino2": kindFlag,
-	// performance knobs
-	"parallel": kindInt, "batchsize": kindInt, "pipeline": kindInt,
-	"condstore": kindFlag, "nocondstore": kindFlag,
+	// The fork's own additions -- parallel, pipeline, batchsize, condstore --
+	// are deliberately NOT here. A code review traced what they actually do:
+	//
+	//   parallel  re-executes imapsync per worker and builds the child's argv by
+	//             hand, including "--password1 <plaintext>" (imapsync:3315). That
+	//             puts both mailbox passwords in ps output for the whole run,
+	//             which is the exact thing writePassfile exists to prevent. The
+	//             child also drops maxage, exclude, port and automap, and Abort
+	//             cannot reach the workers.
+	//   pipeline  prefetches with message_string() while the normal path uses
+	//             message_to_file() (imapsync:2956 vs :12291). Nobody has shown
+	//             the two return identical bytes, and that branch has no test, so
+	//             it may append a different message body than a plain run.
+	//   batchsize changes which IMAP fetches are issued; see sub batch_parse_headers.
+	//   condstore is dead code -- condstore_changed_msgs is written and never read.
+	//
+	// They remain usable from the command line by whoever runs imapsync directly.
+	// They are not offered to a web request until each is fixed and tested.
 	// numeric limits
 	"maxage": kindInt, "minage": kindInt, "maxsize": kindInt, "minsize": kindInt,
 	"maxmessagespersecond": kindInt, "maxbytespersecond": kindInt,

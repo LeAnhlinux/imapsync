@@ -68,9 +68,16 @@ func splitSide(what, value string) (host, user, password string, err error) {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		// Never quote the input back. This message is a new message from the
+		// bot, and the bot cannot delete its own messages the way it deletes
+		// the user's -- so echoing the line would leave the password in the
+		// chat permanently, immediately after telling the user it was removed.
+		// A wrong field count is usually a password containing ';', which is
+		// exactly when the echo would have leaked it.
 		return "", "", "", errf(
-			"The %s mailbox needs exactly host;user;password — got %d field(s) in %q.\n\n%s",
-			what, len(parts), value, runUsage)
+			"The %s mailbox needs exactly host;user;password — I counted %d field(s), not 3.\n"+
+				"If the password contains a ';' or a space, that is the cause.\n\n%s",
+			what, len(parts), runUsage)
 	}
 	return parts[0], parts[1], parts[2], nil
 }
@@ -88,14 +95,18 @@ func parseLabeled(text string) (services.Row, error) {
 	var row services.Row
 	var haveFrom, haveTo bool
 
-	for _, raw := range strings.Split(text, "\n") {
+	for i, raw := range strings.Split(text, "\n") {
+		lineNo := i + 1
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		m := labelLine.FindStringSubmatch(line)
 		if m == nil {
-			return row, errf("I do not understand this line:\n  %s\n\n%s", line, runUsage)
+			// Line numbers, not the line: an unparsed line still holds whatever
+			// the user typed, password included.
+			return row, errf("I do not understand line %d. Each line needs a "+
+				"\"from:\" or \"to:\" label.\n\n%s", lineNo, runUsage)
 		}
 		key := strings.ToLower(m[1])
 		value := strings.TrimSpace(line[len(m[0]):])

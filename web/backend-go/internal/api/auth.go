@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -35,6 +36,14 @@ func (t *throttle) blocked(key string) bool {
 			kept = append(kept, at)
 		}
 	}
+	// Drop the entry rather than storing an empty slice. The key contains the
+	// submitted username, so writing one unconditionally meant every login
+	// attempt -- including a first one with a username nobody has ever used --
+	// left a permanent map entry that only a *successful* login could remove.
+	if len(kept) == 0 {
+		delete(t.attempts, key)
+		return false
+	}
 	t.attempts[key] = kept
 	return len(kept) >= maxAttempts
 }
@@ -52,11 +61,18 @@ func (t *throttle) clear(key string) {
 }
 
 func clientIP(r *http.Request) string {
-	if host, _, ok := strings.Cut(r.RemoteAddr, ":"); ok {
+	// net.SplitHostPort, not strings.Cut: an IPv6 peer is "[::1]:443", and
+	// cutting at the first colon returned "[".
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}
 	return r.RemoteAddr
 }
+
+// maxUsernameLen bounds what goes into a throttle key. Without it the key is
+// as long as the submitted username, which nginx allows up to its 50 MB body
+// limit.
+const maxUsernameLen = 64
 
 // authenticate resolves the caller's credential into a user.
 //
@@ -135,6 +151,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	if len(body.Username) > maxUsernameLen {
+		// Refuse before the username reaches a throttle key or a query.
+		writeError(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 

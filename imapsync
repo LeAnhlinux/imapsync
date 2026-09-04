@@ -1627,8 +1627,13 @@ $sync->{ delete2duplicates } = determine_delete2duplicates( $sync ) ;
 $sync->{maxmessagespersecond} = defined  $sync->{maxmessagespersecond}  ? $sync->{maxmessagespersecond} : 0 ;
 $sync->{maxbytespersecond}    = defined  $sync->{maxbytespersecond}     ? $sync->{maxbytespersecond}    : 0 ;
 
-# Batch size for header parsing (reduces memory peak on huge folders)
-$sync->{ batchsize } = defined $sync->{ batchsize } ? $sync->{ batchsize } : 10000 ;
+# Batch size for header parsing (reduces memory peak on huge folders).
+# Default 0 = off, which sends the whole message list to parse_headers in one
+# call exactly as upstream does. Chunking is not a free optimisation: a chunk
+# that fails leaves the other chunks looking successful, and a message whose
+# header did not parse is *skipped* rather than counted as an error, so a run
+# could silently drop messages and still exit 0. Opt in with --batchsize N.
+$sync->{ batchsize } = defined $sync->{ batchsize } ? $sync->{ batchsize } : 0 ;
 
 # Parallel folder sync: number of concurrent folder syncs (1 = sequential, default)
 $sync->{ parallel_count } = defined $sync->{ parallel_count } ? $sync->{ parallel_count } : 1 ;
@@ -3189,11 +3194,12 @@ sub batch_parse_headers
 {
         my ( $imap, $msgs_ref, $useheader_ref, $batchsize ) = @_ ;
 
-        $batchsize ||= 10000 ;
         my $total = scalar @{ $msgs_ref } ;
 
-        # Small enough, just do it in one call
-        if ( $total <= $batchsize ) {
+        # Off (the default), nonsense, or small enough: one call, which is
+        # byte-for-byte the upstream code path. A negative value used to make
+        # the loop below run forever.
+        if ( ! $batchsize or $batchsize < 1 or $total <= $batchsize ) {
                 return $imap->parse_headers( $msgs_ref, @{ $useheader_ref } ) ;
         }
 
@@ -22215,18 +22221,40 @@ sub tests_new_option_defaults
 {
         note( 'Entering tests_new_option_defaults()' ) ;
 
-        # These defaults are the whole reason the fork can still take upstream
-        # changes: with none of the new flags given, imapsync must behave
-        # exactly as it did before they existed.
-        my $mysync = {  } ;
-        $mysync->{ batchsize }      = defined $mysync->{ batchsize }      ? $mysync->{ batchsize }      : 10000 ;
-        $mysync->{ parallel_count } = defined $mysync->{ parallel_count } ? $mysync->{ parallel_count } : 1 ;
-        $mysync->{ pipeline_depth } = defined $mysync->{ pipeline_depth } ? $mysync->{ pipeline_depth } : 0 ;
+        # This test exists because its predecessor did not work: it copied the
+        # defaulting expressions into its own body and asserted on the copy, so
+        # changing the real default kept it green. These call the real code.
+        #
+        # The invariant: with none of the fork's flags given, imapsync must do
+        # exactly what upstream does. Chunked header fetching is the one that
+        # can silently change which messages are examined, so it is the one
+        # worth pinning.
 
-        is( $mysync->{ parallel_count }, 1, 'defaults: --parallel is off (sequential folders)' ) ;
-        is( $mysync->{ pipeline_depth }, 0, 'defaults: --pipeline is off' ) ;
-        is( $mysync->{ condstore }, undef, 'defaults: --condstore is off until asked for' ) ;
-        ok( $mysync->{ batchsize } >= 1000, 'defaults: --batchsize only chunks very large folders' ) ;
+        my $imap = Imapsync::FakeImap->new() ;
+
+        # batchsize 0 is the default. It must issue ONE parse_headers call, the
+        # upstream call, no matter how many messages there are.
+        my $heads = batch_parse_headers( $imap, [ 1 .. 5000 ], [ 'Message-Id' ], 0 ) ;
+        is( scalar $imap->calls, 1,
+                'defaults: --batchsize off sends one parse_headers call, as upstream does' ) ;
+        is( scalar keys %{ $heads }, 5000, 'defaults: no message is lost on that call' ) ;
+
+        # undef reaches here whenever a caller has not set the option at all.
+        $imap = Imapsync::FakeImap->new() ;
+        batch_parse_headers( $imap, [ 1 .. 5000 ], [ 'Message-Id' ], undef ) ;
+        is( scalar $imap->calls, 1, 'defaults: an unset --batchsize behaves the same' ) ;
+
+        # A negative value used to spin forever: $offset += $batchsize walked
+        # backwards and the while loop never reached $total.
+        $imap = Imapsync::FakeImap->new() ;
+        batch_parse_headers( $imap, [ 1 .. 100 ], [ 'Message-Id' ], -1 ) ;
+        is( scalar $imap->calls, 1, 'defaults: a negative --batchsize does not hang' ) ;
+
+        # And the opt-in path still chunks, so the default is a real choice
+        # rather than the feature being dead.
+        $imap = Imapsync::FakeImap->new() ;
+        batch_parse_headers( $imap, [ 1 .. 25 ], [ 'Message-Id' ], 10 ) ;
+        is( scalar $imap->calls, 3, 'opt-in: --batchsize 10 still chunks 25 messages into 3 calls' ) ;
 
         note( 'Leaving  tests_new_option_defaults()' ) ;
         return ;
