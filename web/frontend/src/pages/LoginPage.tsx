@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, Loader2, Mail } from 'lucide-react'
+import { Loader2, Mail } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/data'
 import { Input } from '@/components/ui/input'
 
 export function LoginPage() {
@@ -81,15 +82,7 @@ export function LoginPage() {
 
             {/* role="alert" so a screen reader announces the failure, and the
                 icon means the message does not depend on colour alone. */}
-            {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            {error && <Alert>{error}</Alert>}
 
             <Button type="submit" className="w-full" disabled={loading || !username || !password}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

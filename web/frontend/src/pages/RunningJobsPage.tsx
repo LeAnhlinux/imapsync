@@ -5,7 +5,8 @@ import { syncApi } from '@/lib/api'
 import { useJobWebSocket } from '@/lib/ws'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/ui/badge'
-import { EmptyState, PageHeader, Progress } from '@/components/ui/data'
+import { EmptyState, Page, Progress, Section } from '@/components/ui/data'
+import { buttonVariants } from '@/components/ui/button-variants'
 import { formatBytes, formatDuration } from '@/lib/format'
 
 interface Job {
@@ -64,14 +65,9 @@ export function RunningJobsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <PageHeader
-        title="Running Jobs"
-        description="Live progress and output for syncs in flight."
-      />
-
+    <Page title="Running Jobs" description="Live progress and output for syncs in flight.">
       {highlighted && highlighted.status !== 'running' && (
-        <div className="mb-4 rounded-lg border border-border bg-card p-4">
+        <Section>
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge status={highlighted.status} />
             <div className="min-w-0 flex-1">
@@ -82,10 +78,7 @@ export function RunningJobsPage() {
                 → {highlighted.dest_account ?? '—'}
               </p>
             </div>
-            <Link
-              to="/history"
-              className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
-            >
+            <Link to="/history" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
               Open in History
             </Link>
           </div>
@@ -94,25 +87,22 @@ export function RunningJobsPage() {
               ? 'It finished before this page loaded.'
               : 'It stopped before this page loaded — open it in History for the log.'}
           </p>
-        </div>
+        </Section>
       )}
 
       {jobs.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card">
+        <Section flush>
           <EmptyState
             icon={Inbox}
             title="Nothing running"
             description="Syncs you start will appear here until they finish."
             action={
-              <Link
-                to="/sync/new"
-                className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
-              >
+              <Link to="/sync/new" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 Start a sync
               </Link>
             }
           />
-        </div>
+        </Section>
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => {
@@ -122,7 +112,7 @@ export function RunningJobsPage() {
                 <div className="flex flex-wrap items-center gap-3 px-4 py-3">
                   <button
                     onClick={() => setOpen(expanded ? null : job.id)}
-                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                    className="-my-1 flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-md text-left"
                     aria-expanded={expanded}
                   >
                     {expanded ? (
@@ -178,7 +168,7 @@ export function RunningJobsPage() {
           })}
         </div>
       )}
-    </div>
+    </Page>
   )
 }
 

@@ -12,7 +12,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': {
+      // The trailing slash matters: '/api' also matched the /api-access page,
+      // so reloading it in dev returned the backend's 404.
+      '/api/': {
         target: 'http://localhost:8000',
         changeOrigin: true,
         ws: true,

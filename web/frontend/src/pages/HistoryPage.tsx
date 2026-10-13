@@ -6,7 +6,18 @@ import { Dialog } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { StatusBadge } from '@/components/ui/badge'
-import { EmptyState, PageHeader, Table, TableSkeleton, Td, Th, Tr } from '@/components/ui/data'
+import {
+  Alert,
+  Chip,
+  EmptyState,
+  Page,
+  Section,
+  Table,
+  TableSkeleton,
+  Td,
+  Th,
+  Tr,
+} from '@/components/ui/data'
 import { formatBytes, formatDateTime, formatDuration } from '@/lib/format'
 
 interface Job {
@@ -75,12 +86,12 @@ function LogViewer({
         )}
         <div className="ml-auto flex items-center gap-3">
           {streaming && (
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
               <input
                 type="checkbox"
                 checked={follow}
                 onChange={(e) => setFollow(e.target.checked)}
-                className="h-3.5 w-3.5"
+                className="h-4 w-4 cursor-pointer accent-primary"
               />
               Follow
             </label>
@@ -215,32 +226,33 @@ export function HistoryPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <PageHeader
-        title="History"
-        description="Every sync this account has run."
-        actions={
-          <Button variant="outline" onClick={() => setShowPurge(true)}>
-            <Trash2 className="mr-1.5 h-4 w-4" />
-            Clear old
-          </Button>
-        }
-      />
-
+    <Page
+      title="History"
+      description="Every sync this account has run."
+      actions={
+        <Button variant="outline" onClick={() => setShowPurge(true)}>
+          <Trash2 className="mr-1.5 h-4 w-4" />
+          Clear old
+        </Button>
+      }
+    >
       {notice && (
-        <div
-          role="status"
-          className="mb-3 flex items-center justify-between gap-2 rounded-md bg-subtle px-3 py-2 text-sm"
-        >
-          <span>{notice}</span>
-          <button onClick={() => setNotice('')} aria-label="Dismiss">
-            <X className="h-4 w-4 text-muted-foreground" />
-          </button>
-        </div>
+        <Alert tone="success">
+          <div className="flex items-start justify-between gap-2">
+            <span>{notice}</span>
+            <button
+              onClick={() => setNotice('')}
+              aria-label="Dismiss"
+              className="-my-1 -mr-1.5 grid h-7 w-7 shrink-0 cursor-pointer place-items-center rounded-md hover:bg-foreground/10"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </Alert>
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="relative w-full min-w-0 sm:w-72">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
             aria-hidden
@@ -259,42 +271,32 @@ export function HistoryPage() {
 
         {/* Status is a small closed set, so chips beat a select: one tap, and
             the active filter is visible without opening anything. */}
-        <div className="flex flex-wrap gap-1">
-          <button
-            aria-pressed={status === ''}
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
+          <Chip
+            active={status === ''}
             onClick={() => {
               setStatus('')
               setPage(1)
             }}
-            className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-              status === ''
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-subtle text-muted-foreground hover:bg-accent'
-            }`}
           >
             All
-          </button>
+          </Chip>
           {STATUSES.map((s) => (
-            <button
+            <Chip
               key={s}
-              aria-pressed={status === s}
+              active={status === s}
               onClick={() => {
                 setStatus(s)
                 setPage(1)
               }}
-              className={`rounded-full px-2.5 py-1 text-xs capitalize transition-colors ${
-                status === s
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-subtle text-muted-foreground hover:bg-accent'
-              }`}
             >
-              {s}
-            </button>
+              <span className="capitalize">{s}</span>
+            </Chip>
           ))}
         </div>
       </div>
 
-      <div className="rounded-lg border border-border bg-card">
+      <Section flush>
         {loading ? (
           <TableSkeleton rows={6} cols={5} />
         ) : jobs.length === 0 ? (
@@ -343,25 +345,32 @@ export function HistoryPage() {
                   <Td align="right" mono className="text-muted-foreground">
                     {j.id}
                   </Td>
-                  <Td>
-                    <p className="truncate text-sm">{j.source_account ?? '—'}</p>
-                    <p className="truncate text-xs text-muted-foreground">
+                  <Td className="w-full min-w-56 max-w-0">
+                    <p className="truncate text-sm" title={j.source_account ?? undefined}>
+                      {j.source_account ?? '—'}
+                    </p>
+                    <p
+                      className="truncate text-xs text-muted-foreground"
+                      title={j.dest_account ?? undefined}
+                    >
                       → {j.dest_account ?? '—'}
                     </p>
                   </Td>
-                  <Td>
+                  <Td className="whitespace-nowrap">
                     <StatusBadge status={j.status} />
                     {j.errors_count > 0 && (
-                      <span className="ml-1.5 text-xs text-danger">{j.errors_count} err</span>
+                      <span className="ml-1.5 text-xs text-danger">
+                        {j.errors_count} {j.errors_count === 1 ? 'error' : 'errors'}
+                      </span>
                     )}
                   </Td>
                   <Td align="right" className="tabular">
                     {j.messages_transferred.toLocaleString()}
                   </Td>
-                  <Td align="right" className="tabular text-muted-foreground">
+                  <Td align="right" className="tabular whitespace-nowrap text-muted-foreground">
                     {formatBytes(j.bytes_transferred)}
                   </Td>
-                  <Td align="right" className="tabular text-muted-foreground">
+                  <Td align="right" className="tabular whitespace-nowrap text-muted-foreground">
                     {formatDuration(j.started_at, j.finished_at)}
                   </Td>
                   <Td mono className="whitespace-nowrap text-muted-foreground">
@@ -393,10 +402,10 @@ export function HistoryPage() {
             </tbody>
           </Table>
         )}
-      </div>
+      </Section>
 
-      <div className="mt-3 flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
+      <div className="flex items-center justify-between">
+        <p className="tabular text-xs text-muted-foreground">
           {total === null
             ? `Page ${page}`
             : total === 0
@@ -466,28 +475,17 @@ export function HistoryPage() {
             Removes finished jobs and their logs. Running jobs are never touched.
           </p>
           <div className="mt-4">
-            <span className="mb-1 block text-sm font-medium">Older than</span>
+            <span className="mb-1.5 block text-sm font-medium">Older than</span>
             <div className="flex flex-wrap gap-1.5">
               {[7, 30, 90, 0].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setPurgeDays(d)}
-                  aria-pressed={purgeDays === d}
-                  className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                    purgeDays === d
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-subtle text-muted-foreground hover:bg-accent'
-                  }`}
-                >
+                <Chip key={d} active={purgeDays === d} onClick={() => setPurgeDays(d)}>
                   {d === 0 ? 'Everything' : `${d} days`}
-                </button>
+                </Chip>
               ))}
             </div>
           </div>
           {purgeDays === 0 && (
-            <p className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
-              This clears every finished job in your history.
-            </p>
+            <Alert className="mt-3">This clears every finished job in your history.</Alert>
           )}
         </Dialog>
       )}
@@ -495,6 +493,6 @@ export function HistoryPage() {
       {log && (
         <LogViewer id={log.id} initial={log.text} live={log.live} onClose={() => setLog(null)} />
       )}
-    </div>
+    </Page>
   )
 }

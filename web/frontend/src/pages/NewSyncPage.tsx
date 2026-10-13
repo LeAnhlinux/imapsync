@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowRight, Check, FolderSearch, Loader2, PlayCircle } from 'lucide-react'
+import { ArrowRight, Check, FolderSearch, Loader2, PlayCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { PageHeader } from '@/components/ui/data'
+import { Alert, Page, Section } from '@/components/ui/data'
+import { Checkbox, Field, Select, Textarea } from '@/components/ui/form'
+import { MailboxFields } from '@/components/MailboxFields'
 import { formatBytes } from '@/lib/format'
 import { folderApi, profileApi, syncApi, type FolderInfo } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -178,86 +179,48 @@ export function NewSyncPage() {
   const mailbox = (which: 1 | 2) => {
     const isSource = which === 1
     return (
-      <div className="rounded-lg border border-border p-3">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {isSource ? 'Source (copied from)' : 'Destination (copied to)'}
-        </p>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`h${which}`}>
-              Host
-            </label>
-            <Input
-              id={`h${which}`}
-              value={isSource ? host1 : host2}
-              onChange={(e) => (isSource ? setHost1 : setHost2)(e.target.value)}
-              placeholder={isSource ? 'imap.gmail.com' : 'mail.example.com'}
-              disabled={selectedProfile !== null}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`u${which}`}>
-              Username
-            </label>
-            <Input
-              id={`u${which}`}
-              value={isSource ? user1 : user2}
-              onChange={(e) => (isSource ? setUser1 : setUser2)(e.target.value)}
-              placeholder="me@example.com"
-              disabled={selectedProfile !== null}
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={`p${which}`}>
-              Password
-            </label>
-            <Input
-              id={`p${which}`}
-              type="password"
-              value={isSource ? password1 : password2}
-              onChange={(e) => (isSource ? setPassword1 : setPassword2)(e.target.value)}
-              placeholder={selectedProfile !== null ? 'Stored in the profile' : ''}
-              disabled={selectedProfile !== null}
-              autoComplete="new-password"
-            />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={isSource ? ssl1 : ssl2}
-              onChange={(e) => (isSource ? setSsl1 : setSsl2)(e.target.checked)}
-              disabled={selectedProfile !== null}
-              className="h-4 w-4"
-            />
-            Use SSL/TLS
-          </label>
-        </div>
-      </div>
+      <MailboxFields
+        which={which}
+        value={
+          isSource
+            ? { host: host1, user: user1, password: password1, ssl: ssl1 }
+            : { host: host2, user: user2, password: password2, ssl: ssl2 }
+        }
+        onChange={(patch) => {
+          if (patch.host !== undefined) (isSource ? setHost1 : setHost2)(patch.host)
+          if (patch.user !== undefined) (isSource ? setUser1 : setUser2)(patch.user)
+          if (patch.password !== undefined) (isSource ? setPassword1 : setPassword2)(patch.password)
+          if (patch.ssl !== undefined) (isSource ? setSsl1 : setSsl2)(patch.ssl)
+        }}
+        passwordPlaceholder={selectedProfile !== null ? 'Stored in the profile' : undefined}
+        disabled={selectedProfile !== null}
+      />
     )
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader title="New Sync" description="Copy one mailbox to another, now." />
-
+    <Page narrow title="New Sync" description="Copy one mailbox to another, now.">
       {/* Numbered steps rather than three bars: the bars showed progress but
           never said what the steps were. */}
-      <ol className="mb-6 flex items-center gap-2">
+      <ol className="flex items-center gap-2" aria-label="Progress">
         {STEPS.map((s, i) => {
           const done = i < stepIndex
           const current = i === stepIndex
           return (
-            <li key={s.key} className="flex flex-1 items-center gap-2">
+            <li
+              key={s.key}
+              aria-current={current ? 'step' : undefined}
+              className={cn('flex items-center gap-2', i < STEPS.length - 1 && 'flex-1')}
+            >
               <span
                 className={cn(
-                  'grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-medium',
+                  'tabular grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold',
                   done && 'bg-primary text-primary-foreground',
                   current && 'bg-primary-soft text-primary ring-2 ring-primary',
                   !done && !current && 'bg-subtle text-muted-foreground'
                 )}
               >
-                {done ? <Check className="h-3 w-3" /> : i + 1}
+                {done ? <Check className="h-3.5 w-3.5" aria-hidden /> : i + 1}
               </span>
               <span className={cn('text-sm', current ? 'font-medium' : 'text-muted-foreground')}>
                 {s.label}
@@ -273,17 +236,21 @@ export function NewSyncPage() {
         })}
       </ol>
 
-      <div className="rounded-lg border border-border bg-card">
+      <Section flush>
         {step === 'credentials' && (
           <div className="space-y-4 p-4">
             {profiles.length > 0 && (
-              <div>
-                <label className="mb-1 block text-sm font-medium" htmlFor="profile">
-                  Use a saved profile
-                </label>
-                <select
+              <Field
+                label="Use a saved profile"
+                htmlFor="profile"
+                className="max-w-md"
+                hint={
+                  selectedProfile !== null &&
+                  'Credentials come from the profile; the fields below are read-only.'
+                }
+              >
+                <Select
                   id="profile"
-                  className="flex h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
                   value={selectedProfile ?? ''}
                   onChange={(e) => pickProfile(e.target.value ? Number(e.target.value) : null)}
                 >
@@ -293,16 +260,11 @@ export function NewSyncPage() {
                       {p.name}
                     </option>
                   ))}
-                </select>
-                {selectedProfile !== null && (
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    Credentials come from the profile; the fields below are read-only.
-                  </p>
-                )}
-              </div>
+                </Select>
+              </Field>
             )}
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2">
               {mailbox(1)}
               {mailbox(2)}
             </div>
@@ -311,64 +273,43 @@ export function NewSyncPage() {
 
         {step === 'options' && (
           <div className="space-y-4 p-4">
-            <fieldset className="space-y-2.5">
-              <legend className="mb-1 text-sm font-medium">Behaviour</legend>
-              <label className="flex items-start gap-2.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={dryRun}
-                  onChange={(e) => setDryRun(e.target.checked)}
-                  className="mt-0.5 h-4 w-4"
-                />
-                <span>
-                  Dry run
-                  <span className="block text-xs text-muted-foreground">
-                    Connect and report what would move, without writing anything.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={automap}
-                  onChange={(e) => setAutomap(e.target.checked)}
-                  className="mt-0.5 h-4 w-4"
-                />
-                <span>
-                  Automap folders
-                  <span className="block text-xs text-muted-foreground">
-                    Match Sent, Drafts and Trash across servers that name them differently.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2.5 text-sm">
-                <input
-                  type="checkbox"
-                  checked={cacheUsed}
-                  disabled={gmailSource}
-                  onChange={(e) => setUsecache(e.target.checked)}
-                  className="mt-0.5 h-4 w-4"
-                />
-                <span>
-                  Use cache
-                  <span className="block text-xs text-muted-foreground">
-                    {gmailSource
-                      ? 'Not available with a Gmail source.'
-                      : 'Skip messages a previous run already copied. Makes re-syncs much faster.'}
-                  </span>
-                </span>
-              </label>
+            <fieldset className="space-y-3">
+              <legend className="mb-2 text-sm font-medium">Behaviour</legend>
+              <Checkbox
+                label="Dry run"
+                hint="Connect and report what would move, without writing anything."
+                checked={dryRun}
+                onChange={(e) => setDryRun(e.target.checked)}
+              />
+              <Checkbox
+                label="Automap folders"
+                hint="Match Sent, Drafts and Trash across servers that name them differently."
+                checked={automap}
+                onChange={(e) => setAutomap(e.target.checked)}
+              />
+              <Checkbox
+                label="Use cache"
+                hint={
+                  gmailSource
+                    ? 'Not available with a Gmail source.'
+                    : 'Skip messages a previous run already copied. Makes re-syncs much faster.'
+                }
+                checked={cacheUsed}
+                disabled={gmailSource}
+                onChange={(e) => setUsecache(e.target.checked)}
+              />
               {gmailSource && (
-                <p className="rounded-md bg-subtle px-3 py-2 text-xs text-muted-foreground">
+                <Alert tone="info">
                   Gmail lists every label as a folder. Each message is copied once, into the first
                   folder it appears in; All Mail only receives archived messages. Folders lose
-                  their “[Gmail]/” prefix on the destination.
-                </p>
+                  their “[Gmail]/” prefix on the destination, and a folder left empty is not
+                  created.
+                </Alert>
               )}
             </fieldset>
 
             <div>
-              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                 <label className="text-sm font-medium" htmlFor="folders">
                   Folders <span className="font-normal text-muted-foreground">(optional)</span>
                 </label>
@@ -389,15 +330,13 @@ export function NewSyncPage() {
               </div>
 
               {browsing && (
-                <p className="mb-2 rounded-md bg-warning-soft px-3 py-2 text-xs text-warning">
+                <Alert tone="warning" className="mb-2">
                   This opens a real IMAP connection and inspects every folder. A large mailbox can
                   take several minutes — leave this tab open.
-                </p>
+                </Alert>
               )}
               {browseError && (
-                <p role="alert" className="mb-2 text-xs text-danger">
-                  {browseError}
-                </p>
+                <Alert className="mb-2">{browseError}</Alert>
               )}
 
               {available && available.length > 0 && (
@@ -405,13 +344,13 @@ export function NewSyncPage() {
                   {available.map((f) => (
                     <label
                       key={f.name}
-                      className="flex cursor-pointer items-center gap-2.5 border-b border-border px-3 py-1.5 text-sm last:border-b-0 hover:bg-subtle"
+                      className="flex min-h-10 cursor-pointer items-center gap-2.5 border-b border-border px-3 py-1.5 text-sm last:border-b-0 hover:bg-subtle"
                     >
                       <input
                         type="checkbox"
                         checked={chosen.has(f.name)}
                         onChange={() => toggleFolder(f.name)}
-                        className="h-4 w-4"
+                        className="h-4 w-4 cursor-pointer accent-primary"
                       />
                       <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.name}</span>
                       <span className="tabular shrink-0 text-xs text-muted-foreground">
@@ -425,15 +364,14 @@ export function NewSyncPage() {
                 </div>
               )}
 
-              <textarea
+              <Textarea
                 id="folders"
                 value={foldersText}
                 onChange={(e) => setFoldersText(e.target.value)}
                 rows={3}
                 placeholder={'INBOX\nSent'}
-                className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm"
               />
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1.5 text-xs text-muted-foreground">
                 One per line. Leave empty to sync every folder.
               </p>
             </div>
@@ -473,20 +411,14 @@ export function NewSyncPage() {
             </div>
 
             {!dryRun && (
-              <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+              <Alert tone="warning">
                 This writes messages into the destination mailbox. Run a dry run first if you are
                 not certain.
-              </p>
+              </Alert>
             )}
 
             {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
+              <Alert>{error}</Alert>
             )}
           </div>
         )}
@@ -519,7 +451,7 @@ export function NewSyncPage() {
             </Button>
           )}
         </div>
-      </div>
-    </div>
+      </Section>
+    </Page>
   )
 }

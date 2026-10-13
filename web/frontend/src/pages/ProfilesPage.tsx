@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ArrowRight, FolderSync, Lock, Plus, ShieldOff, X } from 'lucide-react'
+import { ArrowRight, FolderSync, Lock, Plus, ShieldOff, X } from 'lucide-react'
 import { profileApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { EmptyState, PageHeader, TableSkeleton } from '@/components/ui/data'
+import { Alert, EmptyState, Page, Section, TableSkeleton } from '@/components/ui/data'
+import { Field } from '@/components/ui/form'
+import { MailboxFields } from '@/components/MailboxFields'
 
 interface Profile {
   id: number
@@ -101,92 +103,56 @@ export function ProfilesPage() {
     }
   }
 
-  const side = (which: 1 | 2) => {
-    const host = which === 1 ? 'host1' : 'host2'
-    const user = which === 1 ? 'user1' : 'user2'
-    const pass = which === 1 ? 'password1' : 'password2'
-    const ssl = which === 1 ? 'ssl1' : 'ssl2'
-    return (
-      <div className="rounded-lg border border-border p-3">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {which === 1 ? 'Source (copied from)' : 'Destination (copied to)'}
-        </p>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={host}>Host</label>
-            <Input
-              id={host}
-              value={form[host]}
-              onChange={(e) => setForm({ ...form, [host]: e.target.value })}
-              placeholder={which === 1 ? 'imap.gmail.com' : 'mail.example.com'}
-              required
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={user}>Username</label>
-            <Input
-              id={user}
-              value={form[user]}
-              onChange={(e) => setForm({ ...form, [user]: e.target.value })}
-              placeholder="me@example.com"
-              required
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor={pass}>Password</label>
-            <Input
-              id={pass}
-              type="password"
-              value={form[pass]}
-              onChange={(e) => setForm({ ...form, [pass]: e.target.value })}
-              placeholder={editId ? 'Leave empty to keep current' : ''}
-              required={!editId}
-              autoComplete="new-password"
-            />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form[ssl]}
-              onChange={(e) => setForm({ ...form, [ssl]: e.target.checked })}
-              className="h-4 w-4"
-            />
-            Use SSL/TLS
-          </label>
-        </div>
-      </div>
-    )
-  }
+  const side = (which: 1 | 2) => (
+    <MailboxFields
+      which={which}
+      value={{
+        host: form[`host${which}`],
+        user: form[`user${which}`],
+        password: form[`password${which}`],
+        ssl: form[`ssl${which}`],
+      }}
+      onChange={(patch) =>
+        setForm({
+          ...form,
+          ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [`${k}${which}`, v])),
+        })
+      }
+      passwordPlaceholder={editId ? 'Leave empty to keep current' : undefined}
+      passwordRequired={!editId}
+    />
+  )
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <PageHeader
-        title="Profiles"
-        description="Saved mailbox pairs you can sync or schedule."
-        actions={
-          !showForm && (
-            <Button onClick={() => setShowForm(true)}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              New Profile
-            </Button>
-          )
-        }
-      />
-
+    <Page
+      title="Profiles"
+      description="Saved mailbox pairs you can sync or schedule."
+      actions={
+        !showForm && (
+          <Button onClick={() => setShowForm(true)}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Profile
+          </Button>
+        )
+      }
+    >
       {showForm && (
-        <div className="mb-4 rounded-lg border border-border bg-card">
-          <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">
-              {editId ? 'Edit profile' : 'New profile'}
-            </h2>
-            <Button variant="ghost" size="icon" onClick={resetForm} aria-label="Cancel">
+        <Section
+          title={editId ? 'Edit profile' : 'New profile'}
+          aside={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-mr-2 h-8 w-8"
+              onClick={resetForm}
+              aria-label="Cancel"
+            >
               <X className="h-4 w-4" />
             </Button>
-          </header>
-          <form onSubmit={handleSubmit} className="space-y-4 p-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="name">Profile name</label>
+          }
+        >
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Field label="Profile name" htmlFor="name" className="max-w-md">
               <Input
                 id="name"
                 value={form.name}
@@ -195,21 +161,15 @@ export function ProfilesPage() {
                 required
                 autoFocus
               />
-            </div>
+            </Field>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2">
               {side(1)}
               {side(2)}
             </div>
 
             {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
+              <Alert>{error}</Alert>
             )}
 
             <div className="flex gap-2">
@@ -217,10 +177,10 @@ export function ProfilesPage() {
               <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
             </div>
           </form>
-        </div>
+        </Section>
       )}
 
-      <div className="rounded-lg border border-border bg-card">
+      <Section flush>
         {loading ? (
           <TableSkeleton rows={3} cols={3} />
         ) : profiles.length === 0 ? (
@@ -261,14 +221,9 @@ export function ProfilesPage() {
                   </Badge>
                 )}
 
-                <div className="flex gap-1">
+                <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => handleEdit(p)}>Edit</Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-danger hover:bg-danger-soft"
-                    onClick={() => setConfirmDelete(p)}
-                  >
+                  <Button variant="danger" size="sm" onClick={() => setConfirmDelete(p)}>
                     Delete
                   </Button>
                 </div>
@@ -276,7 +231,7 @@ export function ProfilesPage() {
             ))}
           </ul>
         )}
-      </div>
+      </Section>
 
       {/* Deleting a profile is not undoable, so it asks first and names what
           it is about to remove. */}
@@ -310,15 +265,10 @@ export function ProfilesPage() {
             schedule that used it is removed with it.
           </p>
           {deleteError && (
-            <p
-              role="alert"
-              className="mt-3 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-            >
-              {deleteError}
-            </p>
+            <Alert className="mt-3">{deleteError}</Alert>
           )}
         </Dialog>
       )}
-    </div>
+    </Page>
   )
 }

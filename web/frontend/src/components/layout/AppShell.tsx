@@ -77,7 +77,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </span>
         <div className="leading-tight">
           <p className="text-sm font-semibold">imapsync</p>
-          <p className="text-[11px] text-muted-foreground">Web UI</p>
+          <p className="text-xs text-muted-foreground">Web UI</p>
         </div>
         <Button
           variant="ghost"
@@ -93,7 +93,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-3" aria-label="Main">
         {navGroups.map((group) => (
           <div key={group.label}>
-            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {group.label}
             </p>
             <div className="space-y-0.5">
@@ -107,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     className={cn(
                       // A tint plus a left rule marks the current page without a
                       // heavy solid fill drowning the icon.
-                      'relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
+                      'relative flex min-h-9 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
                       active
                         ? 'bg-primary-soft font-medium text-primary'
                         : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -139,7 +139,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{user?.username}</p>
-            <p className="truncate text-[11px] text-muted-foreground">
+            <p className="truncate text-xs text-muted-foreground">
               {user?.is_admin ? 'Admin' : 'User'}
             </p>
           </div>
@@ -168,6 +168,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-svh">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+      >
+        Skip to content
+      </a>
       <aside className="hidden w-60 shrink-0 border-r border-border lg:block">
         <div className="sticky top-0 h-svh">{sidebar}</div>
       </aside>
@@ -184,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-2 border-b border-border bg-card px-4 lg:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-card px-2 lg:hidden">
           <Button
             variant="ghost"
             size="icon"
@@ -196,7 +202,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-semibold">imapsync</span>
         </header>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6">{children}</main>
+        <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-4 py-5 outline-none sm:px-6 sm:py-6 lg:px-8">
+          {children}
+        </main>
       </div>
     </div>
   )

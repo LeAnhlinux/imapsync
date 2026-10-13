@@ -12,7 +12,8 @@ import {
 } from 'lucide-react'
 import { historyApi, syncApi } from '@/lib/api'
 import { StatusBadge } from '@/components/ui/badge'
-import { EmptyState, PageHeader, Skeleton, Stat, Table, Td, Th, Tr } from '@/components/ui/data'
+import { EmptyState, Page, Section, Skeleton, Stat, Table, Td, Th, Tr } from '@/components/ui/data'
+import { buttonVariants, sectionLink } from '@/components/ui/button-variants'
 import { formatBytes, formatDuration } from '@/lib/format'
 
 interface Stats {
@@ -61,22 +62,17 @@ export function DashboardPage() {
   }, [])
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <PageHeader
-        title="Dashboard"
-        description="Migration activity across all your mailboxes."
-        actions={
-          <Link
-            to="/sync/new"
-            className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            <PlayCircle className="mr-1.5 h-4 w-4" />
-            New Sync
-          </Link>
-        }
-      />
-
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <Page
+      title="Dashboard"
+      description="Migration activity across all your mailboxes."
+      actions={
+        <Link to="/sync/new" className={buttonVariants()}>
+          <PlayCircle className="mr-1.5 h-4 w-4" />
+          New Sync
+        </Link>
+      }
+    >
+      <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-4">
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[92px]" />)
         ) : (
@@ -116,25 +112,24 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-lg border border-border bg-card">
-          <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">Running now</h2>
-            {running.length > 0 && (
-              <Link to="/jobs" className="text-xs text-primary hover:underline">
-                View all
+        <Section
+          flush
+          title="Running now"
+          aside={
+            running.length > 0 && (
+              <Link to="/jobs" className={sectionLink}>
+                View all <ArrowRight className="h-3.5 w-3.5" />
               </Link>
-            )}
-          </header>
+            )
+          }
+        >
           {running.length === 0 ? (
             <EmptyState
               icon={Inbox}
               title="Nothing running"
               description="Start a sync and it will appear here with live progress."
               action={
-                <Link
-                  to="/sync/new"
-                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
-                >
+                <Link to="/sync/new" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                   Start a sync
                 </Link>
               }
@@ -155,18 +150,17 @@ export function DashboardPage() {
               ))}
             </ul>
           )}
-        </section>
+        </Section>
 
-        <section className="rounded-lg border border-border bg-card">
-          <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">Recent jobs</h2>
-            <Link
-              to="/history"
-              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-            >
-              History <ArrowRight className="h-3 w-3" />
+        <Section
+          flush
+          title="Recent jobs"
+          aside={
+            <Link to="/history" className={sectionLink}>
+              History <ArrowRight className="h-3.5 w-3.5" />
             </Link>
-          </header>
+          }
+        >
           {recent.length === 0 ? (
             <EmptyState
               icon={Activity}
@@ -185,9 +179,13 @@ export function DashboardPage() {
               <tbody>
                 {recent.map((j) => (
                   <Tr key={j.id}>
-                    <Td>
-                      <p className="truncate text-sm">{j.source_account ?? `Job #${j.id}`}</p>
-                      <p className="truncate text-xs text-muted-foreground">→ {j.dest_account}</p>
+                    <Td className="max-w-0 w-full">
+                      <p className="truncate text-sm" title={j.source_account ?? undefined}>
+                        {j.source_account ?? `Job #${j.id}`}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground" title={j.dest_account ?? undefined}>
+                        → {j.dest_account}
+                      </p>
                     </Td>
                     <Td>
                       <StatusBadge status={j.status} />
@@ -200,8 +198,8 @@ export function DashboardPage() {
               </tbody>
             </Table>
           )}
-        </section>
+        </Section>
       </div>
-    </div>
+    </Page>
   )
 }

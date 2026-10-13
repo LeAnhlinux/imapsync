@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Loader2, Moon, Send, Sun, Trash2 } from 'lucide-react'
+import { Loader2, Moon, Send, Sun, Trash2 } from 'lucide-react'
 import {
   historyApi,
   notificationApi,
@@ -13,55 +13,9 @@ import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { PageHeader } from '@/components/ui/data'
-
-/** One settings block: a titled panel with an optional right-hand status. */
-function Section({
-  title,
-  description,
-  aside,
-  children,
-}: {
-  title: string
-  description?: string
-  aside?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <div>
-          <h2 className="text-sm font-semibold">{title}</h2>
-          {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
-        </div>
-        {aside}
-      </header>
-      <div className="p-4">{children}</div>
-    </section>
-  )
-}
-
-function Field({
-  label,
-  hint,
-  htmlFor,
-  children,
-}: {
-  label: string
-  hint?: string
-  htmlFor?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm font-medium" htmlFor={htmlFor}>
-        {label}
-      </label>
-      {children}
-      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
-    </div>
-  )
-}
+import { Alert, Chip, Page, Section } from '@/components/ui/data'
+import { Checkbox, Field } from '@/components/ui/form'
+import { formatDateTime } from '@/lib/format'
 
 export function SettingsPage() {
   const { theme, toggle } = useThemeStore()
@@ -291,9 +245,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
-      <PageHeader title="Settings" description="Account, appearance and notifications." />
-
+    <Page narrow title="Settings" description="Account, appearance and notifications.">
       <Section title="Account">
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
           <dt className="text-muted-foreground">Username</dt>
@@ -335,20 +287,12 @@ export function SettingsPage() {
         description="Remove old finished jobs, and the imapsync logs stored with them."
       >
         <form onSubmit={handleRetSave} className="space-y-4">
-          <label className="flex items-start gap-2.5 text-sm">
-            <input
-              type="checkbox"
-              checked={ret.enabled}
-              onChange={(e) => setRet({ ...ret, enabled: e.target.checked })}
-              className="mt-0.5 h-4 w-4"
-            />
-            <span>
-              Delete old history automatically
-              <span className="block text-xs text-muted-foreground">
-                Runs every night at 03:30. Running jobs are never touched.
-              </span>
-            </span>
-          </label>
+          <Checkbox
+            label="Delete old history automatically"
+            hint="Runs every night at 03:30. Running jobs are never touched."
+            checked={ret.enabled}
+            onChange={(e) => setRet({ ...ret, enabled: e.target.checked })}
+          />
 
           <Field
             label="Keep finished jobs for"
@@ -357,18 +301,13 @@ export function SettingsPage() {
           >
             <div className="mb-2 flex flex-wrap gap-1.5">
               {[7, 30, 90, 365].map((d) => (
-                <button
+                <Chip
                   key={d}
-                  type="button"
+                  active={ret.keep_days === d}
                   onClick={() => setRet({ ...ret, keep_days: d })}
-                  className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                    ret.keep_days === d
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-subtle text-muted-foreground hover:bg-accent'
-                  }`}
                 >
                   {d === 365 ? '1 year' : `${d} days`}
-                </button>
+                </Chip>
               ))}
             </div>
             <div className="flex items-center gap-2">
@@ -388,8 +327,8 @@ export function SettingsPage() {
 
           {ret.last_run_at && (
             <p className="text-xs text-muted-foreground">
-              Last run {new Date(ret.last_run_at).toLocaleString()} — removed {ret.last_deleted}{' '}
-              job(s).
+              Last run {formatDateTime(ret.last_run_at)} — removed {ret.last_deleted}{' '}
+              {ret.last_deleted === 1 ? 'job' : 'jobs'}.
             </p>
           )}
 
@@ -417,7 +356,7 @@ export function SettingsPage() {
         description="Sent when a job finishes, if SMTP is configured."
       >
         <form onSubmit={handleSave} className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label="SMTP host" htmlFor="smtp_host">
               <Input
                 id="smtp_host"
@@ -491,31 +430,23 @@ export function SettingsPage() {
             </Field>
           </div>
 
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={smtp.notify_on_success}
-                onChange={(e) => {
-                  setSmtp({ ...smtp, notify_on_success: e.target.checked })
-                  setDirty(true)
-                }}
-                className="h-4 w-4"
-              />
-              Notify on success
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={smtp.notify_on_failure}
-                onChange={(e) => {
-                  setSmtp({ ...smtp, notify_on_failure: e.target.checked })
-                  setDirty(true)
-                }}
-                className="h-4 w-4"
-              />
-              Notify on failure
-            </label>
+          <div className="flex flex-wrap gap-x-5 gap-y-2.5">
+            <Checkbox
+              label="Notify on success"
+              checked={smtp.notify_on_success}
+              onChange={(e) => {
+                setSmtp({ ...smtp, notify_on_success: e.target.checked })
+                setDirty(true)
+              }}
+            />
+            <Checkbox
+              label="Notify on failure"
+              checked={smtp.notify_on_failure}
+              onChange={(e) => {
+                setSmtp({ ...smtp, notify_on_failure: e.target.checked })
+                setDirty(true)
+              }}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -585,7 +516,7 @@ export function SettingsPage() {
               />
             </Field>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Allowed chat IDs" htmlFor="chat_ids" hint="Comma separated">
                 <Input
                   id="chat_ids"
@@ -607,47 +538,32 @@ export function SettingsPage() {
               </Field>
             </div>
 
-            <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+            <Alert tone="warning">
               Anyone in that chat-id list can start syncs, upload batches and read job summaries as{' '}
               <strong>{user.username}</strong>. Keep it to yourself.
-            </p>
+            </Alert>
 
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-x-5 gap-y-2.5">
               {[
                 { k: 'enabled' as const, label: 'Enable bot' },
                 { k: 'notify_on_success' as const, label: 'On success' },
                 { k: 'notify_on_failure' as const, label: 'On failure' },
                 { k: 'notify_on_progress' as const, label: 'Progress updates' },
               ].map((o) => (
-                <label key={o.k} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={tg[o.k]}
-                    onChange={(e) => setTg({ ...tg, [o.k]: e.target.checked })}
-                    className="h-4 w-4"
-                  />
-                  {o.label}
-                </label>
+                <Checkbox
+                  key={o.k}
+                  label={o.label}
+                  checked={tg[o.k]}
+                  onChange={(e) => setTg({ ...tg, [o.k]: e.target.checked })}
+                />
               ))}
             </div>
 
             {tgError && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{tgError}</span>
-              </div>
+              <Alert>{tgError}</Alert>
             )}
             {tgStatus?.error && !tgStatus.running && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>Bot error: {tgStatus.error}</span>
-              </div>
+              <Alert>Bot error: {tgStatus.error}</Alert>
             )}
 
             <div className="flex flex-wrap items-center gap-2">
@@ -686,6 +602,6 @@ export function SettingsPage() {
           </form>
         </Section>
       )}
-    </div>
+    </Page>
   )
 }

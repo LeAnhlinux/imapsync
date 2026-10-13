@@ -11,7 +11,8 @@ import {
 import { batchApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Badge, StatusBadge } from '@/components/ui/badge'
-import { PageHeader, Progress, Stat } from '@/components/ui/data'
+import { Alert, Page, Progress, Section, Stat } from '@/components/ui/data'
+import { Checkbox, Textarea } from '@/components/ui/form'
 import { cn } from '@/lib/utils'
 
 interface BatchRun {
@@ -145,26 +146,27 @@ export function BatchImportPage() {
   /* ------------------------------------------------ after upload: review */
   if (batch) {
     return (
-      <div className="mx-auto max-w-3xl">
-        <PageHeader
-          title="Batch Import"
-          description={`${batch.filename} — ${batch.total_rows} mailbox(es)`}
-          actions={
-            <Button variant="outline" onClick={reset}>
-              Start over
-            </Button>
+      <Page
+        narrow
+        title="Batch Import"
+        description={`${batch.filename} — ${batch.total_rows} ${batch.total_rows === 1 ? 'mailbox' : 'mailboxes'}`}
+        actions={
+          <Button variant="outline" onClick={reset}>
+            Start over
+          </Button>
+        }
+      >
+        <Section
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="tabular">Batch #{batch.id}</span>
+              <StatusBadge status={batch.status} />
+              {dryRun && <Badge tone="warning">Dry run</Badge>}
+            </span>
           }
-        />
-
-        <div className="rounded-lg border border-border bg-card">
-          <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
-            <StatusBadge status={batch.status} />
-            {dryRun && <Badge tone="warning">Dry run</Badge>}
-            <span className="ml-auto text-xs text-muted-foreground">Batch #{batch.id}</span>
-          </header>
-
-          <div className="space-y-4 p-4">
-            <div className="grid grid-cols-3 gap-3">
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
               <Stat label="Total" value={batch.total_rows} />
               <Stat
                 label="Completed"
@@ -183,12 +185,7 @@ export function BatchImportPage() {
             {batch.status === 'running' && (
               <>
                 <Progress value={pct} label={`${done} of ${batch.total_rows} mailboxes`} />
-                <Button
-                  variant="outline"
-                  onClick={stop}
-                  disabled={loading}
-                  className="text-danger hover:bg-danger-soft"
-                >
+                <Button variant="danger" onClick={stop} disabled={loading}>
                   <Square className="mr-1.5 h-3 w-3" />
                   Stop after this mailbox
                 </Button>
@@ -200,18 +197,19 @@ export function BatchImportPage() {
 
             {batch.status === 'aborted' && (
               <p className="text-sm text-muted-foreground">
-                Stopped. {batch.completed_rows} mailbox(es) finished before it was cancelled — each
-                one is its own job in History.
+                Stopped. {batch.completed_rows}{' '}
+                {batch.completed_rows === 1 ? 'mailbox' : 'mailboxes'} finished before it was
+                cancelled — each one is its own job in History.
               </p>
             )}
 
             {batch.status === 'pending' && (
               <>
-                <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
+                <Alert tone="warning">
                   Nothing has run yet. Starting will process {batch.total_rows} mailbox
                   {batch.total_rows === 1 ? '' : 'es'}, one at a time
                   {dryRun ? ', writing nothing.' : ', writing into each destination.'}
-                </p>
+                </Alert>
                 <Button onClick={start} disabled={loading}>
                   {loading ? (
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -230,60 +228,52 @@ export function BatchImportPage() {
             )}
 
             {pollWarning && (
-              <p role="alert" className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">
-                {pollWarning}
-              </p>
+              <Alert tone="warning">{pollWarning}</Alert>
             )}
 
-            {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            {error && <Alert>{error}</Alert>}
           </div>
-        </div>
-      </div>
+        </Section>
+      </Page>
     )
   }
 
   /* ---------------------------------------------------- before upload */
   return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader title="Batch Import" description="Migrate many mailboxes from one CSV." />
-
-      <div className="mb-4 rounded-lg border border-border bg-card">
-        <header className="flex items-center gap-1 border-b border-border px-2 py-2">
-          {(['paste', 'file'] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              aria-pressed={mode === m}
-              className={cn(
-                'rounded-md px-3 py-1.5 text-sm transition-colors',
-                mode === m
-                  ? 'bg-primary-soft font-medium text-primary'
-                  : 'text-muted-foreground hover:bg-accent'
-              )}
-            >
-              {m === 'paste' ? 'Paste rows' : 'Upload file'}
-            </button>
-          ))}
-        </header>
-
-        <div className="space-y-3 p-4">
+    <Page narrow title="Batch Import" description="Migrate many mailboxes from one CSV.">
+      <Section
+        title="Mailboxes"
+        aside={
+          <div className="flex rounded-md bg-subtle p-0.5" role="group" aria-label="Input method">
+            {(['paste', 'file'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={cn(
+                  'h-8 cursor-pointer rounded px-3 text-xs font-medium transition-colors',
+                  mode === m
+                    ? 'bg-card text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {m === 'paste' ? 'Paste rows' : 'Upload file'}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div className="space-y-3">
           {mode === 'paste' ? (
             <>
-              <textarea
+              <Textarea
                 value={csvText}
                 onChange={(e) => setCsvText(e.target.value)}
                 rows={8}
                 spellCheck={false}
                 placeholder={SAMPLE}
-                className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs leading-relaxed"
+                className="text-xs leading-relaxed"
                 aria-label="CSV rows"
               />
               {!csvText && (
@@ -351,11 +341,10 @@ export function BatchImportPage() {
             </p>
           </div>
         </div>
-      </div>
+      </Section>
 
-      <div className="mb-4 rounded-lg border border-border bg-card p-4">
-        <p className="mb-3 text-sm font-medium">Applies to every row</p>
-        <div className="grid gap-2.5 sm:grid-cols-2">
+      <Section title="Options" description="Applied to every row.">
+        <div className="grid gap-3 sm:grid-cols-2">
           {[
             {
               v: dryRun,
@@ -388,42 +377,31 @@ export function BatchImportPage() {
               hint: 'Encrypt the destination',
             },
           ].map((o) => (
-            <label key={o.label} className="flex items-start gap-2.5 text-sm">
-              <input
-                type="checkbox"
-                checked={o.v}
-                onChange={(e) => o.set(e.target.checked)}
-                className="mt-0.5 h-4 w-4"
-              />
-              <span>
-                {o.label}
-                <span className="block text-xs text-muted-foreground">{o.hint}</span>
-              </span>
-            </label>
+            <Checkbox
+              key={o.label}
+              label={o.label}
+              hint={o.hint}
+              checked={o.v}
+              onChange={(e) => o.set(e.target.checked)}
+            />
           ))}
         </div>
-      </div>
+      </Section>
 
-      {error && (
-        <div
-          role="alert"
-          className="mb-4 flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-        >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
+      {error && <Alert>{error}</Alert>}
 
       {/* Uploading only parses and previews; nothing runs until you confirm on
           the next screen. */}
-      <Button onClick={upload} disabled={loading}>
-        {loading ? (
-          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-        ) : (
-          <FileSpreadsheet className="mr-1.5 h-4 w-4" />
-        )}
-        Parse rows
-      </Button>
-    </div>
+      <div>
+        <Button onClick={upload} disabled={loading}>
+          {loading ? (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          ) : (
+            <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+          )}
+          Parse rows
+        </Button>
+      </div>
+    </Page>
   )
 }

@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertCircle, Clock, Pause, Play, Plus, X } from 'lucide-react'
+import { Clock, Pause, Play, Plus, X } from 'lucide-react'
 import { profileApi, scheduleApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { EmptyState, PageHeader } from '@/components/ui/data'
+import { Alert, Chip, EmptyState, Page, Section } from '@/components/ui/data'
+import { Field, Select } from '@/components/ui/form'
+import { buttonVariants } from '@/components/ui/button-variants'
 import { formatDateTime } from '@/lib/format'
 
 interface Profile {
@@ -103,42 +105,38 @@ export function SchedulesPage() {
   const profileName = (id: number) => profiles.find((p) => p.id === id)?.name || `Profile #${id}`
 
   return (
-    <div className="mx-auto max-w-4xl">
-      <PageHeader
-        title="Schedules"
-        description="Run a profile automatically on a cron schedule."
-        actions={
-          !showForm &&
-          profiles.length > 0 && (
-            <Button onClick={() => setShowForm(true)}>
-              <Plus className="mr-1.5 h-4 w-4" />
-              New Schedule
-            </Button>
-          )
-        }
-      />
-
+    <Page
+      title="Schedules"
+      description="Run a profile automatically on a cron schedule."
+      actions={
+        !showForm &&
+        profiles.length > 0 && (
+          <Button onClick={() => setShowForm(true)}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Schedule
+          </Button>
+        )
+      }
+    >
       {showForm && (
-        <div className="mb-4 rounded-lg border border-border bg-card">
-          <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">New schedule</h2>
+        <Section
+          title="New schedule"
+          aside={
             <Button
               variant="ghost"
               size="icon"
+              className="-mr-2 h-8 w-8"
               onClick={() => setShowForm(false)}
               aria-label="Cancel"
             >
               <X className="h-4 w-4" />
             </Button>
-          </header>
-          <form onSubmit={handleCreate} className="space-y-4 p-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="profile">
-                Profile
-              </label>
-              <select
+          }
+        >
+          <form onSubmit={handleCreate} className="max-w-xl space-y-4">
+            <Field label="Profile" htmlFor="profile">
+              <Select
                 id="profile"
-                className="flex h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
                 value={profileId}
                 onChange={(e) => setProfileId(Number(e.target.value))}
               >
@@ -148,27 +146,19 @@ export function SchedulesPage() {
                     {p.name}
                   </option>
                 ))}
-              </select>
-            </div>
+              </Select>
+            </Field>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium" htmlFor="cron">
-                Cron expression
-              </label>
+            <Field
+              label="Cron expression"
+              htmlFor="cron"
+              hint="Five fields: minute hour day month weekday. Times are UTC+7."
+            >
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {PRESETS.map((p) => (
-                  <button
-                    key={p.cron}
-                    type="button"
-                    onClick={() => setCron(p.cron)}
-                    className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                      cron === p.cron
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-subtle text-muted-foreground hover:bg-accent'
-                    }`}
-                  >
+                  <Chip key={p.cron} active={cron === p.cron} onClick={() => setCron(p.cron)}>
                     {p.label}
-                  </button>
+                  </Chip>
                 ))}
               </div>
               <Input
@@ -178,19 +168,10 @@ export function SchedulesPage() {
                 placeholder="0 2 * * *"
                 className="font-mono"
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Five fields: minute hour day month weekday. Times are UTC+7.
-              </p>
-            </div>
+            </Field>
 
             {error && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
+              <Alert>{error}</Alert>
             )}
 
             <div className="flex gap-2">
@@ -200,10 +181,10 @@ export function SchedulesPage() {
               </Button>
             </div>
           </form>
-        </div>
+        </Section>
       )}
 
-      <div className="rounded-lg border border-border bg-card">
+      <Section flush>
         {schedules.length === 0 ? (
           <EmptyState
             icon={Clock}
@@ -215,10 +196,7 @@ export function SchedulesPage() {
             }
             action={
               profiles.length === 0 ? (
-                <Link
-                  to="/profiles"
-                  className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm transition-colors hover:bg-accent"
-                >
+                <Link to="/profiles" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                   Go to Profiles
                 </Link>
               ) : (
@@ -244,7 +222,7 @@ export function SchedulesPage() {
                   {s.is_active ? 'Active' : 'Paused'}
                 </Badge>
 
-                <div className="flex gap-1">
+                <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => toggle(s)}>
                     {s.is_active ? (
                       <>
@@ -258,12 +236,7 @@ export function SchedulesPage() {
                       </>
                     )}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-danger hover:bg-danger-soft"
-                    onClick={() => setConfirmDelete(s)}
-                  >
+                  <Button variant="danger" size="sm" onClick={() => setConfirmDelete(s)}>
                     Delete
                   </Button>
                 </div>
@@ -271,7 +244,7 @@ export function SchedulesPage() {
             ))}
           </ul>
         )}
-      </div>
+      </Section>
 
       {confirmDelete && (
         <Dialog
@@ -300,6 +273,6 @@ export function SchedulesPage() {
           </p>
         </Dialog>
       )}
-    </div>
+    </Page>
   )
 }

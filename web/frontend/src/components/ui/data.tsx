@@ -1,7 +1,34 @@
-import type { LucideIcon } from 'lucide-react'
+import { CircleAlert, CircleCheck, Info, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /* ------------------------------------------------------------------ page */
+
+/**
+ * Every page sits in the same column, so the title does not jump sideways when
+ * moving between a wide table and a narrow form. A form page narrows its body,
+ * not the column: `narrow` keeps a readable line length under a header that
+ * stays put.
+ */
+export function Page({
+  title,
+  description,
+  actions,
+  narrow = false,
+  children,
+}: {
+  title: string
+  description?: string
+  actions?: React.ReactNode
+  narrow?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mx-auto w-full max-w-6xl">
+      <PageHeader title={title} description={description} actions={actions} />
+      <div className={cn('space-y-4', narrow && 'max-w-3xl')}>{children}</div>
+    </div>
+  )
+}
 
 export function PageHeader({
   title,
@@ -13,13 +40,109 @@ export function PageHeader({
   actions?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
-      <div>
+    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
+  )
+}
+
+/* --------------------------------------------------------------- section */
+
+/** The one card every page is built from: a titled header over a body. */
+export function Section({
+  title,
+  description,
+  aside,
+  flush = false,
+  className,
+  children,
+}: {
+  title?: React.ReactNode
+  description?: React.ReactNode
+  aside?: React.ReactNode
+  /** No body padding, for a table or list that runs edge to edge. */
+  flush?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className={cn('rounded-lg border border-border bg-card', className)}>
+      {(title || aside) && (
+        <header className="flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
+          <div className="min-w-0">
+            {title && <h2 className="text-sm font-semibold">{title}</h2>}
+            {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
+          </div>
+          {aside && <div className="flex flex-wrap items-center gap-2">{aside}</div>}
+        </header>
+      )}
+      <div className={cn(!flush && 'p-4')}>{children}</div>
+    </section>
+  )
+}
+
+/* ----------------------------------------------------------------- alert */
+
+const alertTone = {
+  danger: { box: 'bg-danger-soft text-danger', icon: CircleAlert },
+  warning: { box: 'bg-warning-soft text-warning', icon: TriangleAlert },
+  success: { box: 'bg-success-soft text-success', icon: CircleCheck },
+  info: { box: 'bg-info-soft text-info', icon: Info },
+}
+
+/** Inline message. The icon carries the tone too, so it survives greyscale. */
+export function Alert({
+  tone = 'danger',
+  className,
+  children,
+}: {
+  tone?: keyof typeof alertTone
+  className?: string
+  children: React.ReactNode
+}) {
+  const { box, icon: Icon } = alertTone[tone]
+  return (
+    <div
+      // Only failures interrupt a screen reader; the rest wait their turn.
+      role={tone === 'danger' ? 'alert' : 'status'}
+      className={cn('flex items-start gap-2 rounded-md px-3 py-2 text-sm', box, className)}
+    >
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ chip */
+
+/** A toggle in a small closed set: status filters, presets. */
+export function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'inline-flex h-8 cursor-pointer items-center rounded-full border px-3 text-xs font-medium transition-colors',
+        active
+          ? 'border-primary bg-primary-soft text-primary'
+          : 'border-border bg-card text-muted-foreground hover:border-border-strong hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
