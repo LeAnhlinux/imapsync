@@ -54,6 +54,13 @@ export function NewSyncPage() {
   const [browsing, setBrowsing] = useState(false)
   const [browseError, setBrowseError] = useState('')
 
+  // Mirrors ApplyPresets in the runner: a Gmail source going anywhere else is
+  // run with --gmail1, which imapsync cannot combine with the cache.
+  const isGmail = (host: string) =>
+    /^imap\.(gmail|googlemail)\.com(:\d+)?$/i.test(host.trim())
+  const gmailSource = isGmail(host1) && !isGmail(host2)
+  const cacheUsed = usecache && !gmailSource
+
   const chosen = new Set(
     foldersText
       .split('\n')
@@ -337,17 +344,27 @@ export function NewSyncPage() {
               <label className="flex items-start gap-2.5 text-sm">
                 <input
                   type="checkbox"
-                  checked={usecache}
+                  checked={cacheUsed}
+                  disabled={gmailSource}
                   onChange={(e) => setUsecache(e.target.checked)}
                   className="mt-0.5 h-4 w-4"
                 />
                 <span>
                   Use cache
                   <span className="block text-xs text-muted-foreground">
-                    Skip messages a previous run already copied. Makes re-syncs much faster.
+                    {gmailSource
+                      ? 'Not available with a Gmail source.'
+                      : 'Skip messages a previous run already copied. Makes re-syncs much faster.'}
                   </span>
                 </span>
               </label>
+              {gmailSource && (
+                <p className="rounded-md bg-subtle px-3 py-2 text-xs text-muted-foreground">
+                  Gmail lists every label as a folder. Each message is copied once, into the first
+                  folder it appears in; All Mail only receives archived messages. Folders lose
+                  their “[Gmail]/” prefix on the destination.
+                </p>
+              )}
             </fieldset>
 
             <div>
@@ -444,7 +461,8 @@ export function NewSyncPage() {
             <div className="flex flex-wrap gap-1.5">
               {dryRun && <Badge tone="warning">Dry run — nothing is written</Badge>}
               {automap && <Badge tone="neutral">automap</Badge>}
-              {usecache && <Badge tone="neutral">usecache</Badge>}
+              {cacheUsed && <Badge tone="neutral">usecache</Badge>}
+              {gmailSource && <Badge tone="neutral">gmail1 — one copy per message</Badge>}
               {!ssl1 && <Badge tone="warning">Source without TLS</Badge>}
               {!ssl2 && <Badge tone="warning">Destination without TLS</Badge>}
               <Badge tone="neutral">

@@ -145,6 +145,40 @@ func SanitizeOptions(extra map[string]any) (map[string]any, []string) {
 	return accepted, rejected
 }
 
+// gmailHost reports whether an IMAP host, with or without a ":port", is Gmail.
+func gmailHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	if i := strings.LastIndex(h, ":"); i >= 0 {
+		h = h[:i]
+	}
+	return h == "imap.gmail.com" || h == "imap.googlemail.com"
+}
+
+// ApplyPresets adjusts already-sanitized options for servers that need it and
+// returns a line for the job log per change, so a run never differs silently
+// from what was asked for.
+//
+// Gmail shows every label as a folder, so one message sits in INBOX, All Mail,
+// Important and Starred at once. Copied as-is to a server with real folders
+// that is three or four copies of each message, which a threaded webmail then
+// lists side by side. --gmail1 copies each message once (All Mail goes last and
+// only receives what no other folder had) and drops the "[Gmail]/" prefix.
+// Gmail to Gmail is left alone: labels mean the same thing on both sides.
+func ApplyPresets(host1, host2 string, opts map[string]any) []string {
+	var notes []string
+	if gmailHost(host1) && !gmailHost(host2) && opts["gmail1"] != true && opts["gmail2"] != true {
+		opts["gmail1"] = true
+		notes = append(notes, "Note: source is Gmail, added --gmail1 so a message under several labels is copied once")
+	}
+	// imapsync exits with a usage error when given both, and --gmail1 turns
+	// --skipcrossduplicates on.
+	if (opts["gmail1"] == true || opts["skipcrossduplicates"] == true) && opts["usecache"] == true {
+		delete(opts, "usecache")
+		notes = append(notes, "Note: dropped --usecache, imapsync cannot combine it with --skipcrossduplicates")
+	}
+	return notes
+}
+
 func truthy(v any) (on bool, valid bool) {
 	switch t := v.(type) {
 	case bool:

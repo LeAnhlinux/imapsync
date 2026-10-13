@@ -118,3 +118,36 @@ func TestAnEmptyValueDoesNotEnableAFlag(t *testing.T) {
 		t.Errorf("an explicit request was dropped: %v", accepted)
 	}
 }
+
+func TestApplyPresets(t *testing.T) {
+	cases := []struct {
+		name         string
+		host1, host2 string
+		in           map[string]any
+		wantGmail1   bool
+		wantUsecache bool
+		wantNotes    int
+	}{
+		// Job 34: every Gmail label was copied as its own folder, so the
+		// destination held three copies of most messages.
+		{"gmail to other", "imap.gmail.com:993", "mail.example.com", map[string]any{"automap": true, "usecache": true}, true, false, 2},
+		{"gmail without cache", "IMAP.Gmail.com", "mail.example.com", map[string]any{}, true, false, 1},
+		{"gmail to gmail", "imap.gmail.com", "imap.gmail.com", map[string]any{"usecache": true}, false, true, 0},
+		{"other to other", "mail.a.com", "mail.b.com", map[string]any{"usecache": true}, false, true, 0},
+		{"lookalike host", "imap.gmail.com.evil.test", "mail.b.com", map[string]any{"usecache": true}, false, true, 0},
+		{"already asked for", "imap.gmail.com", "mail.b.com", map[string]any{"gmail1": true}, true, false, 0},
+		{"explicit crossduplicates", "mail.a.com", "mail.b.com", map[string]any{"skipcrossduplicates": true, "usecache": true}, false, false, 1},
+	}
+	for _, c := range cases {
+		notes := ApplyPresets(c.host1, c.host2, c.in)
+		if got := c.in["gmail1"] == true; got != c.wantGmail1 {
+			t.Errorf("%s: gmail1 = %v, want %v", c.name, got, c.wantGmail1)
+		}
+		if got := c.in["usecache"] == true; got != c.wantUsecache {
+			t.Errorf("%s: usecache = %v, want %v", c.name, got, c.wantUsecache)
+		}
+		if len(notes) != c.wantNotes {
+			t.Errorf("%s: notes %v, want %d", c.name, notes, c.wantNotes)
+		}
+	}
+}

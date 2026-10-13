@@ -198,6 +198,7 @@ func (r *Runner) Start(jobID int64, p Params) (*Job, error) {
 	// Anything outside the allowlist is dropped here too, not just at the API
 	// boundary: this is the single place every caller funnels through.
 	safe, rejected := SanitizeOptions(p.ExtraOptions)
+	notes := ApplyPresets(p.Host1, p.Host2, safe)
 	for k, v := range safe {
 		if v == true {
 			args = append(args, "--"+k)
@@ -226,10 +227,12 @@ func (r *Runner) Start(jobID int64, p Params) (*Job, error) {
 		}
 	}
 	if len(rejected) > 0 {
-		warning := "Warning: ignored unsupported or unsafe options: " + strings.Join(rejected, ", ")
-		job.lines = append(job.lines, warning)
+		notes = append(notes, "Warning: ignored unsupported or unsafe options: "+strings.Join(rejected, ", "))
+	}
+	for _, note := range notes {
+		job.lines = append(job.lines, note)
 		if job.logFile != nil {
-			_, _ = job.logFile.WriteString(warning + "\n")
+			_, _ = job.logFile.WriteString(note + "\n")
 		}
 	}
 
