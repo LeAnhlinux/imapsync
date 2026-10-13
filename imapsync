@@ -2524,6 +2524,7 @@ FOLDER: foreach my $h1_fold ( @{ $sync->{h1_folders_wanted} } )
                         }
                         next FOLDER ;
                 }
+                push @{ $sync->{ h2_folders_created } }, $h2_fold ;
         }
 
         acls_sync( $sync, $h1_fold, $h2_fold ) ;
@@ -3134,6 +3135,10 @@ myprint( "++++ End looping on each folder\n"  ) ;
 
 if ( $sync->{ delete1 } and $sync->{ delete1emptyfolders } ) {
 	delete1emptyfolders( $sync ) ;
+}
+
+if ( $sync->{ skipcrossduplicates } and not $sync->{ justfolders } ) {
+        delete2createdemptyfolders( $sync ) ;
 }
 
 ( $sync->{ debug } or $sync->{debugfolders} ) and myprint( 'Time: ', timenext( $sync ), " s\n"  ) ;
@@ -18856,6 +18861,73 @@ sub delete_folder
         }
 }
 
+# With --skipcrossduplicates a host1 folder can hold nothing but messages
+# already copied to another host2 folder (Gmail labels: Important, Starred,
+# All Mail). Its host2 folder is created before that is known, and stays empty.
+# Only folders created by this very run are considered, never older ones.
+sub delete2createdemptyfolders
+{
+        my $mysync = shift @ARG ;
+        if ( ! $mysync ) { return ; } # abort if no parameter
+        if ( $mysync->{ dry } ) { return ; } # nothing is created in dry mode
+        my $imap = $mysync->{ imap2 } ;
+        if ( ! $imap ) { return ; } # abort if no imap
+        if ( $imap->IsUnconnected(  ) ) { return ; } # abort if disconnected
+
+        my @deleted ;
+        foreach my $folder ( reverse @{ $mysync->{ h2_folders_created } || [  ] } ) {
+                if ( uc $folder eq 'INBOX' ) { next ; }
+                my $parenthood = $imap->is_parent( $folder ) ;
+                if ( ! defined $parenthood or $parenthood ) { next ; }
+                my $nb_messages_select = examine_folder_and_count( $mysync, $imap, $folder, 'Host2' ) ;
+                if ( ! defined $nb_messages_select ) { next ; }
+                my $nb_messages_search = scalar( @{ $imap->messages(  ) || [ 1 ] } ) ;
+                # can not delete a SELECTed or EXAMINEd folder so closing it
+                $imap->close(  ) ; # close after examine does not expunge
+                if ( 0 != $nb_messages_select + $nb_messages_search ) { next ; }
+                myprint( "Host2: folder [$folder] was created by this run and received no message, removing it\n" ) ;
+                if ( delete_folder( $mysync, $imap, $folder, 'Host2' ) ) {
+                        push @deleted, $folder ;
+                }
+        }
+        return( @deleted ) ;
+}
+
+sub tests_delete2createdemptyfolders
+{
+        note( 'Entering tests_delete2createdemptyfolders()' ) ;
+
+        is( undef, delete2createdemptyfolders(  ), 'delete2createdemptyfolders: no args => undef' ) ;
+
+        my %nb_messages = ( 'All Mail' => 0, 'Archive' => 2, 'Parent' => 0, 'INBOX' => 0 ) ;
+        my $examined ;
+        my @imap_deleted ;
+        my $imapT = Test::MockObject->new(  ) ;
+        $imapT->set_false( 'IsUnconnected' ) ;
+        $imapT->mock( 'is_parent', sub { return( $_[1] eq 'Parent' ? 1 : 0 ) } ) ;
+        $imapT->mock( 'examine',   sub { $examined = $_[1] ; return 1 } ) ;
+        $imapT->mock( 'History',   sub { return( "* $nb_messages{ $examined } EXISTS" ) } ) ;
+        $imapT->mock( 'messages',  sub { return( [ ( 1 ) x $nb_messages{ $examined } ] ) } ) ;
+        $imapT->set_true( 'close', 'unsubscribe' ) ;
+        $imapT->mock( 'delete',    sub { push @imap_deleted, $_[1] ; return 1 } ) ;
+
+        my $mysync = { imap2 => $imapT, dry_message => q{} } ;
+        is_deeply( [  ], [ delete2createdemptyfolders( $mysync ) ], 'delete2createdemptyfolders: nothing created => nothing deleted' ) ;
+
+        $mysync->{ h2_folders_created } = [ 'INBOX', 'Archive', 'Parent', 'All Mail' ] ;
+        is_deeply( [ 'All Mail' ], [ delete2createdemptyfolders( $mysync ) ],
+                'delete2createdemptyfolders: only the empty childless non-INBOX folder goes' ) ;
+        is_deeply( [ 'All Mail' ], \@imap_deleted, 'delete2createdemptyfolders: one DELETE sent' ) ;
+
+        @imap_deleted = (  ) ;
+        $mysync->{ dry } = 1 ;
+        is( undef, delete2createdemptyfolders( $mysync ), 'delete2createdemptyfolders: --dry => undef' ) ;
+        is_deeply( [  ], \@imap_deleted, 'delete2createdemptyfolders: --dry => no DELETE sent' ) ;
+
+        note( 'Leaving  tests_delete2createdemptyfolders()' ) ;
+        return ;
+}
+
 sub delete1emptyfolders
 {
         my $mysync = shift @ARG ;
@@ -22470,6 +22542,7 @@ sub tests
                 tests_logfilesuffix(  ) ;
                 tests_cgienvcontext(  ) ;
                 tests_usecache_and_skipcrossduplicates(  ) ;
+                tests_delete2createdemptyfolders(  ) ;
                 tests_loglogfile(  ) ;
                 tests_heavy_load_reached(  ) ;
                 tests_heavy_load_percent_threshold(  ) ;
@@ -22497,7 +22570,7 @@ sub tests
 
                 #tests_always_fail(  ) ;
                 
-                done_testing( 1992 ) ;
+                done_testing( 1998 ) ;
                 note( 'Leaving  tests()' ) ;
         }
         return ;
