@@ -3,13 +3,16 @@
 /*
  * Data-dense operations console.
  *
- * Indigo over the usual corporate blue, and neutrals carrying a trace of the
- * same hue rather than cold slate — a grey that shares the accent's hue reads
- * as designed rather than as an absence of colour.
+ * Teal carries the interface and orange is kept for the one action a screen
+ * exists for -- starting a sync. The neutrals lean toward the teal rather than
+ * sitting on cold slate, so the greys read as part of the palette.
+ *
+ * Status colours are deliberately not teal: success is a yellower green and
+ * "running" is blue, so a Completed badge never reads as a brand element, and
+ * warning is a yellow-amber that stays apart from the orange accent.
  *
  * Every foreground/background pair below was measured, not eyeballed: all 22
- * combinations clear WCAG AA (4.5:1) in both themes, the tightest being the
- * amber "Aborted" badge at 4.51.
+ * combinations clear WCAG AA (4.5:1) in both themes.
  *
  * Fonts stay on the system stack: this is a self-hosted internal tool, and a
  * webfont would add a third-party request to every page load to buy little.
@@ -17,50 +20,48 @@
 
 @theme {
   /* --- surfaces ------------------------------------------------------- */
-  --color-background: #f7f8fb;
-  --color-foreground: #16161d;
+  --color-background: #f4f9f8;
+  --color-foreground: #0f1f1d;
   --color-card: #ffffff;
-  --color-card-foreground: #16161d;
-  --color-subtle: #f1f2f7;
+  --color-card-foreground: #0f1f1d;
+  --color-subtle: #edf4f3;
   --color-sidebar: #ffffff;
 
   /* --- brand ---------------------------------------------------------- */
-  --color-primary: #4f46e5;
+  --color-primary: #0f766e;
   --color-primary-foreground: #ffffff;
-  --color-primary-soft: #eef2ff;
-  --color-brand-accent: #b45309;
-  --color-brand-accent-soft: #fef3c7;
+  --color-primary-soft: #d5f3ee;
+  --color-brand-accent: #c2410c;
+  --color-brand-accent-foreground: #ffffff;
+  --color-brand-accent-soft: #ffedd5;
 
-  --color-secondary: #f1f2f7;
-  --color-secondary-foreground: #16161d;
-  --color-muted: #f1f2f7;
-  --color-muted-foreground: #63647a;
-  --color-accent: #eceef5;
-  --color-accent-foreground: #16161d;
+  --color-secondary: #edf4f3;
+  --color-secondary-foreground: #0f1f1d;
+  --color-muted: #edf4f3;
+  --color-muted-foreground: #566a67;
+  --color-accent: #e4eeec;
+  --color-accent-foreground: #0f1f1d;
 
   /* --- status --------------------------------------------------------- */
-  /* Each has a text-safe tone and a separate tint for backgrounds, so a badge
-     never uses one value for both. Rose rather than fire-engine red: it sits
-     better beside indigo and still reads unmistakably as failure. */
-  --color-success: #047857;
-  --color-success-soft: #d1fae5;
-  --color-warning: #b45309;
+  --color-success: #15803d;
+  --color-success-soft: #dcfce7;
+  --color-warning: #8f5a04;
   --color-warning-soft: #fef3c7;
-  --color-danger: #be123c;
-  --color-danger-soft: #ffe4e6;
-  --color-info: #4338ca;
-  --color-info-soft: #e0e7ff;
-  --color-neutral: #4b4c60;
-  --color-neutral-soft: #e7e8ef;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  --color-info: #1d4ed8;
+  --color-info-soft: #dbeafe;
+  --color-neutral: #45575a;
+  --color-neutral-soft: #e3ebea;
 
-  --color-destructive: #be123c;
+  --color-destructive: #b91c1c;
   --color-destructive-foreground: #ffffff;
 
   /* --- lines ---------------------------------------------------------- */
-  --color-border: #e4e5ed;
-  --color-border-strong: #cdcfdc;
-  --color-input: #d5d7e2;
-  --color-ring: #4f46e5;
+  --color-border: #dce7e5;
+  --color-border-strong: #c2d2cf;
+  --color-input: #c5d5d2;
+  --color-ring: #0f766e;
 
   --radius: 0.625rem;
 
@@ -71,48 +72,51 @@
 }
 
 .dark {
-  /* Near-black with a violet cast, not navy: it lets the indigo accent sit on
-     top without the whole screen reading as "blue". */
-  --color-background: #0a0a10;
-  --color-foreground: #ececf1;
-  --color-card: #131319;
-  --color-card-foreground: #ececf1;
-  --color-subtle: #1c1c25;
-  --color-sidebar: #0d0d14;
+  /* Near-black with a green cast. Dark mode lightens the brand rather than
+     inverting it: the teal that reads as confident on white disappears
+     against a dark surface. */
+  --color-background: #08110f;
+  --color-foreground: #e7f1ef;
+  --color-card: #0f1a19;
+  --color-card-foreground: #e7f1ef;
+  --color-subtle: #172523;
+  --color-sidebar: #0b1514;
 
-  /* Dark mode lightens the brand rather than inverting it: the indigo that
-     reads as confident on white disappears against a dark surface. */
-  --color-primary: #a5b4fc;
-  --color-primary-foreground: #0a0a10;
-  --color-primary-soft: #282455;
-  --color-brand-accent: #fbbf24;
-  --color-brand-accent-soft: #3a2506;
+  /* --- brand ---------------------------------------------------------- */
+  --color-primary: #5eead4;
+  --color-primary-foreground: #04201c;
+  --color-primary-soft: #0f3a34;
+  --color-brand-accent: #fb923c;
+  --color-brand-accent-foreground: #1f0d02;
+  --color-brand-accent-soft: #3d1f08;
 
-  --color-secondary: #1c1c25;
-  --color-secondary-foreground: #ececf1;
-  --color-muted: #1c1c25;
-  --color-muted-foreground: #9a9bb0;
-  --color-accent: #212130;
-  --color-accent-foreground: #ececf1;
+  --color-secondary: #172523;
+  --color-secondary-foreground: #e7f1ef;
+  --color-muted: #172523;
+  --color-muted-foreground: #93a9a5;
+  --color-accent: #1b2c2a;
+  --color-accent-foreground: #e7f1ef;
 
-  --color-success: #34d399;
-  --color-success-soft: #06342a;
-  --color-warning: #fbbf24;
-  --color-warning-soft: #3a2506;
-  --color-danger: #fb7185;
-  --color-danger-soft: #450a1c;
-  --color-info: #a5b4fc;
-  --color-info-soft: #282455;
-  --color-neutral: #a1a2b8;
-  --color-neutral-soft: #232330;
+  /* --- status --------------------------------------------------------- */
+  --color-success: #4ade80;
+  --color-success-soft: #0c3320;
+  --color-warning: #facc15;
+  --color-warning-soft: #3a2f06;
+  --color-danger: #f87171;
+  --color-danger-soft: #4a1414;
+  --color-info: #93c5fd;
+  --color-info-soft: #16305a;
+  --color-neutral: #a5b6b3;
+  --color-neutral-soft: #1e2e2c;
 
-  --color-destructive: #fb7185;
-  --color-destructive-foreground: #0a0a10;
+  --color-destructive: #f87171;
+  --color-destructive-foreground: #1c0606;
 
-  --color-border: #26262f;
-  --color-border-strong: #3a3a49;
-  --color-input: #3a3a49;
-  --color-ring: #a5b4fc;
+  /* --- lines ---------------------------------------------------------- */
+  --color-border: #1e2f2d;
+  --color-border-strong: #334a46;
+  --color-input: #334a46;
+  --color-ring: #5eead4;
 }
 
 body {

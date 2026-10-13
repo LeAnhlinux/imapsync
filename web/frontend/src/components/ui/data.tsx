@@ -162,7 +162,7 @@ export function Stat({
   tone?: 'default' | 'success' | 'danger' | 'info'
 }) {
   const iconTone = {
-    default: 'bg-subtle text-muted-foreground',
+    default: 'bg-primary-soft text-primary',
     success: 'bg-success-soft text-success',
     danger: 'bg-danger-soft text-danger',
     info: 'bg-info-soft text-info',

@@ -8,6 +8,8 @@ export const buttonVariants = cva(
     variants: {
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
+        // The action the screen exists for. One per screen, at most.
+        accent: 'bg-brand-accent text-brand-accent-foreground shadow-sm hover:bg-brand-accent/90',
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         outline: 'border border-border bg-card hover:bg-accent hover:text-accent-foreground',
         // A destructive action that is one of several in a row: it reads as

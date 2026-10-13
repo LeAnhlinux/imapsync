@@ -210,7 +210,7 @@ export function BatchImportPage() {
                   {batch.total_rows === 1 ? '' : 'es'}, one at a time
                   {dryRun ? ', writing nothing.' : ', writing into each destination.'}
                 </Alert>
-                <Button onClick={start} disabled={loading}>
+                <Button variant="accent" onClick={start} disabled={loading}>
                   {loading ? (
                     <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                   ) : (

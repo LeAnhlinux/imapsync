@@ -66,7 +66,7 @@ export function DashboardPage() {
       title="Dashboard"
       description="Migration activity across all your mailboxes."
       actions={
-        <Link to="/sync/new" className={buttonVariants()}>
+        <Link to="/sync/new" className={buttonVariants({ variant: 'accent' })}>
           <PlayCircle className="mr-1.5 h-4 w-4" />
           New Sync
         </Link>

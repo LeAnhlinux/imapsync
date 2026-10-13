@@ -433,7 +433,7 @@ export function NewSyncPage() {
           </Button>
 
           {step === 'review' ? (
-            <Button onClick={start} disabled={loading}>
+            <Button variant="accent" onClick={start} disabled={loading}>
               {loading ? (
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
               ) : (
