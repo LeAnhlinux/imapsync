@@ -41,8 +41,6 @@ func result(v any) (*mcp.CallToolResult, any, error) {
 }
 
 func register(s *mcp.Server, t *tools) {
-	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(true)}
-
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "list_profiles",
 		Description: "List the saved mailbox pairs (profiles). A sync is started by profile, " +
@@ -120,6 +118,8 @@ func register(s *mcp.Server, t *tools) {
 		Description: "Totals across all sync jobs: how many ran, succeeded and failed, and how much mail moved.",
 		Annotations: readOnly,
 	}, t.historyStats)
+
+	registerMore(s, t)
 }
 
 // ------------------------------------------------------------------ profiles

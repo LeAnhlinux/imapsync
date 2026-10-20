@@ -1,13 +1,12 @@
 // Command imapsync-mcp is an MCP server for the imapsync web UI. It runs on the
 // user's machine over stdio and drives a deployed instance through its HTTP
-// API with an API key, so a model can list profiles, start and watch syncs,
-// and read their logs.
+// API with an API key. Every endpoint has a tool: profiles, syncs and their
+// logs, batches, schedules, history, notifications, keys and webhooks.
 //
 // Configuration is by environment:
 //
 //	IMAPSYNC_URL               the site, e.g. https://sync.example.com
-//	IMAPSYNC_API_KEY           an isk_ key; sync:read, sync:write, profiles:read
-//	                           (and profiles:write for create_profile)
+//	IMAPSYNC_API_KEY           an isk_ key; its scopes decide which tools work
 //	IMAPSYNC_MCP_ALLOW_DELETE  1 to allow delete1/delete2/expunge options
 package main
 
@@ -21,7 +20,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func newServer(api *Client, allowDelete bool) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "imapsync", Version: version}, &mcp.ServerOptions{

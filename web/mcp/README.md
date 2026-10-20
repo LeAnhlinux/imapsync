@@ -14,18 +14,23 @@ make dist         # dist/ binaries for macOS, Linux and Windows
 
 ## Get a key
 
-In the web UI, **API Access → Create key**. Give it only what the model needs:
+In the web UI, **API Access → Create key**. Every API endpoint has a tool, and
+the key's scopes decide which of them work — the rest answer 403:
 
-| Scope | Needed for |
+| Scope | Tools |
 |---|---|
-| `profiles:read` | `list_profiles`, `browse_folders`, and the safety check in `start_sync` |
-| `profiles:write` | `create_profile` |
-| `sync:read` | `get_job`, `get_job_log`, `list_running_jobs`, `list_history`, `history_stats` |
-| `sync:write` | `start_sync`, `abort_job` |
+| `profiles:read` | `list_profiles`, `get_profile`, `browse_folders`; also the delete check in `start_sync` by profile |
+| `profiles:write` | `create_profile`, `update_profile`, `delete_profile` |
+| `sync:read` | `get_job`, `get_job_log`, `list_running_jobs`, `list_history`, `history_stats`, `get_batch`, `get_history_retention` |
+| `sync:write` | `start_sync`, `abort_job`, `delete_job`, `purge_history`, `set_history_retention`, `run_history_retention` |
+| `batch:write` | `create_batch`, `start_batch`, `abort_batch` |
+| `schedules:read` / `schedules:write` | `list_schedules` / `create_schedule`, `update_schedule`, `delete_schedule` |
+| `admin` | everything, plus email and Telegram notifications, API keys and webhooks |
 
-Leave `admin` off. A read-only assistant needs just `profiles:read` and
-`sync:read`; the write tools then answer 403. Scopes can be changed later
-with **Edit** without replacing the key.
+For day-to-day migrations, `profiles:read`, `profiles:write`, `sync:read`,
+`sync:write` is enough. Give `admin` only to an assistant you want managing
+the server itself — it can issue more keys. Scopes can be changed later with
+**Edit** without replacing the key.
 
 ## Configure
 
@@ -62,18 +67,28 @@ claude mcp add imapsync \
 
 ## Tools
 
-| Tool | Does |
+46 tools, one or more per [API endpoint](../../external-api-syncmail.md#appendix-every-endpoint).
+
+| Area | Tools |
 |---|---|
-| `list_profiles` | saved mailbox pairs; never their passwords |
-| `create_profile` | save a source/destination pair given by hand, for later syncs |
-| `browse_folders` | folders of a mailbox — a profile's source, or one given by hand — with counts and sizes |
-| `start_sync` | start a sync for a profile or for two mailboxes given by hand; optionally a dry run, some folders, extra options |
-| `get_job` | a job's status and counters; `wait_seconds` blocks until it stops running |
-| `get_job_log` | the last lines of a job's log, or a page from an offset |
-| `list_running_jobs` | jobs running now |
-| `abort_job` | stop a running job |
-| `list_history` | past jobs, filtered by status or account |
-| `history_stats` | totals across all jobs |
+| Account | `whoami` |
+| Profiles | `list_profiles`, `get_profile`, `create_profile`, `update_profile`, `delete_profile` |
+| Folders | `browse_folders` — a profile's source, or a mailbox given by hand |
+| Syncs | `start_sync`, `get_job` (with `wait_seconds`), `get_job_log` (tail or pages), `list_running_jobs`, `abort_job`, `delete_job` |
+| Batches | `create_batch` (CSV text), `start_batch`, `get_batch`, `abort_batch` |
+| Schedules | `list_schedules`, `create_schedule`, `update_schedule`, `delete_schedule` |
+| History | `list_history`, `history_stats`, `purge_history`, `get_history_retention`, `set_history_retention`, `run_history_retention` |
+| Email alerts | `get_email_notifications`, `update_email_notifications`, `test_email_notifications` |
+| Telegram | `get_telegram`, `update_telegram`, `telegram_status`, `test_telegram` |
+| API keys | `list_api_keys`, `list_api_key_scopes`, `create_api_key`, `update_api_key`, `revoke_api_key`, `delete_api_key` |
+| Webhooks | `list_webhooks`, `list_webhook_events`, `create_webhook`, `update_webhook`, `test_webhook`, `delete_webhook` |
+
+Tools that delete or stop something are marked destructive, so clients that
+ask before acting (Claude Code does) ask for those.
+
+The two API endpoints without a tool are `POST /batch/upload`, the multipart
+twin of `create_batch`, and the job WebSocket, which `get_job` and
+`get_job_log` replace.
 
 ## Two ways to name the mailboxes
 
@@ -94,10 +109,8 @@ pair you will sync again with `create_profile` so later runs can name it.
 
 - **Delete mail** unless `IMAPSYNC_MCP_ALLOW_DELETE=1`. The check covers the
   profile's saved options as well as the call's, since both apply to the run.
-  A dry run is always allowed — it writes nothing. `create_profile` will not
-  save these options either.
-- **Administer the server.** Keys, webhooks, notification settings, history
-  purges and job deletion are left to the web UI.
+  A dry run is always allowed — it writes nothing. `create_profile`,
+  `update_profile` and `create_batch` will not save or queue them either.
 
 ## Waiting on slow things
 
@@ -108,3 +121,14 @@ single call has to:
   Calling it again with the same profile joins the listing already running.
 - `get_job` with `wait_seconds` holds for at most 120 seconds; the model calls
   again to keep waiting. Each wait is one request against the key's rate limit.
+
+## Testing
+
+`go test ./...` runs against a fake API. `TestEndToEnd` drives every tool
+against a real server and fails if a tool is added without being covered;
+point it at a throwaway instance whose `IMAPSYNC_PATH` is a stub, with an
+admin-scoped key:
+
+```bash
+IMAPSYNC_E2E_URL=http://127.0.0.1:18080 IMAPSYNC_E2E_KEY=isk_... go test -run EndToEnd -v
+```
