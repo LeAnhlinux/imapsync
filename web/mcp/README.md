@@ -5,6 +5,8 @@ runs on your machine over stdio and drives a deployed instance through its
 [HTTP API](../../external-api-syncmail.md), so Claude (or any MCP client) can
 list profiles, start and watch syncs, and read their logs.
 
+Hướng dẫn cài đặt và sử dụng bằng tiếng Việt: [HUONG_DAN.md](HUONG_DAN.md).
+
 ## Build
 
 ```bash
