@@ -8,6 +8,7 @@ import { Alert, EmptyState, Page, Section, Table, Td, Th, Tr } from '@/component
 import { Checkbox, Field } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { formatDateTime } from '@/lib/format'
+import { McpSetup } from '@/components/apikeys/McpSetup'
 
 const code = 'rounded bg-subtle px-1 py-0.5 font-mono text-[0.92em] text-foreground'
 
@@ -359,6 +360,8 @@ export function ApiKeysPage() {
           </Table>
         )}
       </Section>
+
+      <McpSetup newKey={newKey} />
 
       {/* ------------------------------------------------------- webhooks */}
       <Section

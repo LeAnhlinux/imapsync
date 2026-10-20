@@ -1,7 +1,7 @@
 BINARY  := imapsync-mcp
 LDFLAGS := -s -w
 
-.PHONY: build dist test clean
+.PHONY: build dist downloads test clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
@@ -12,6 +12,12 @@ dist:
 	GOOS=darwin  GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64 .
 	GOOS=linux   GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 .
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe .
+
+# dist plus the manifest.json the web UI lists them from. deploy.sh copies the
+# result into the frontend, where it is served under /downloads/mcp/.
+VERSION := $(shell sed -n 's/^const version = "\(.*\)"/\1/p' main.go)
+downloads: dist
+	./manifest.sh dist $(VERSION)
 
 test:
 	go test ./...

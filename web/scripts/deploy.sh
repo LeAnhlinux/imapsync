@@ -78,6 +78,13 @@ print_ok "Static linux/amd64 binaries built"
 ( cd "$WEB_DIR/frontend" && npm ci --silent >/dev/null 2>&1 && npm run build --silent >/dev/null 2>&1 )
 print_ok "Frontend built"
 
+# The MCP connector runs on users' own machines, so it ships as downloads
+# inside the frontend, listed by the manifest the API Access page reads.
+( cd "$WEB_DIR/mcp" && make downloads >/dev/null )
+mkdir -p "$WEB_DIR/frontend/dist/downloads/mcp"
+cp "$WEB_DIR/mcp/dist/"* "$WEB_DIR/frontend/dist/downloads/mcp/"
+print_ok "MCP connector built for download"
+
 #############################################################
 print_step 2 "Testing the SSH connection"
 #############################################################
