@@ -20,6 +20,8 @@ type fakeAPI struct {
 	started       []map[string]any
 	profileOpts   map[string]any
 	browsePolls   int
+	browseBodies  []map[string]any
+	profiles      []map[string]any
 	browseDoneAt  int
 	lastKeyHeader string
 }
@@ -51,7 +53,19 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "GET" && r.URL.Path == "/api/sync/404":
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"detail": "Job not found"})
+	case r.Method == "POST" && r.URL.Path == "/api/profiles":
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		f.profiles = append(f.profiles, b)
+		b["id"] = 9
+		delete(b, "password1")
+		delete(b, "password2")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(b)
 	case r.Method == "POST" && r.URL.Path == "/api/folders/browse":
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		f.browseBodies = append(f.browseBodies, b)
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]any{"id": "t1", "status": "running"})
 	case r.Method == "GET" && r.URL.Path == "/api/folders/browse/t1":
@@ -265,5 +279,101 @@ func TestNewClientAcceptsEitherBase(t *testing.T) {
 		if got := NewClient(in, "k").base; got != "https://x.example/api" {
 			t.Errorf("%q → %q", in, got)
 		}
+	}
+}
+
+var (
+	oldBox = map[string]any{"host": "mail.old.example", "user": "a@old.example", "password": "pw-a"}
+	newBox = map[string]any{"host": "imap.new.example", "user": "b@new.example", "password": "pw-b",
+		"ssl": false, "port": 143}
+)
+
+func TestStartSyncWithConnectionDetails(t *testing.T) {
+	fake := &fakeAPI{}
+	cs := connect(t, fake, false)
+	text, isErr := call(t, cs, "start_sync", map[string]any{
+		"source": oldBox, "destination": newBox, "extra_options": map[string]any{"automap": true}})
+	if isErr {
+		t.Fatal(text)
+	}
+	b := fake.started[0]
+	want := map[string]any{
+		"host1": "mail.old.example", "user1": "a@old.example", "password1": "pw-a", "ssl1": true,
+		"host2": "imap.new.example", "user2": "b@new.example", "password2": "pw-b", "ssl2": false,
+		"dry_run": false,
+	}
+	for k, v := range want {
+		if b[k] != v {
+			t.Errorf("%s = %v, want %v", k, b[k], v)
+		}
+	}
+	if _, ok := b["profile_id"]; ok {
+		t.Error("profile_id sent alongside connection details")
+	}
+	opts, _ := b["extra_options"].(map[string]any)
+	if opts["port2"] != float64(143) || opts["automap"] != true || opts["port1"] != nil {
+		t.Errorf("extra_options = %v, want automap and port2 only", opts)
+	}
+	// No profile is looked up for an ad-hoc pair.
+	if fake.saw("GET /api/profiles/") {
+		t.Error("an ad-hoc sync fetched a profile")
+	}
+}
+
+func TestStartSyncRejectsIncompleteDetails(t *testing.T) {
+	fake := &fakeAPI{}
+	cs := connect(t, fake, false)
+	for name, args := range map[string]map[string]any{
+		"nothing":         {},
+		"no destination":  {"source": oldBox},
+		"no password":     {"source": oldBox, "destination": map[string]any{"host": "h", "user": "u"}},
+		"deletes, ad-hoc": {"source": oldBox, "destination": newBox, "extra_options": map[string]any{"delete1": 1}},
+	} {
+		if text, isErr := call(t, cs, "start_sync", args); !isErr {
+			t.Errorf("%s: accepted (%s)", name, text)
+		}
+	}
+	if len(fake.started) != 0 {
+		t.Errorf("%d incomplete syncs reached the API", len(fake.started))
+	}
+}
+
+func TestCreateProfile(t *testing.T) {
+	fake := &fakeAPI{}
+	cs := connect(t, fake, false)
+	text, isErr := call(t, cs, "create_profile", map[string]any{
+		"name": "Customer A", "source": oldBox, "destination": newBox})
+	if isErr {
+		t.Fatal(text)
+	}
+	if !strings.Contains(text, `"id":9`) || strings.Contains(text, "pw-") {
+		t.Errorf("result should carry the new id and no password: %s", text)
+	}
+	b := fake.profiles[0]
+	if b["name"] != "Customer A" || b["host1"] != "mail.old.example" || b["ssl2"] != false {
+		t.Errorf("profile body: %v", b)
+	}
+
+	if text, isErr := call(t, cs, "create_profile", map[string]any{"name": "x", "source": oldBox,
+		"destination": newBox, "extra_options": map[string]any{"delete2": true}}); !isErr {
+		t.Errorf("a profile saving delete2 was accepted: %s", text)
+	}
+}
+
+func TestBrowseFoldersWithConnectionDetails(t *testing.T) {
+	browsePollEvery = 10 * time.Millisecond
+	t.Cleanup(func() { browsePollEvery = 3 * time.Second })
+
+	fake := &fakeAPI{browseDoneAt: 1}
+	cs := connect(t, fake, false)
+	if text, isErr := call(t, cs, "browse_folders", map[string]any{"mailbox": newBox}); isErr {
+		t.Fatal(text)
+	}
+	b := fake.browseBodies[0]
+	if b["host"] != "imap.new.example" || b["password"] != "pw-b" || b["ssl"] != false || b["async"] != true {
+		t.Errorf("browse body: %v", b)
+	}
+	if text, isErr := call(t, cs, "browse_folders", map[string]any{}); !isErr {
+		t.Errorf("browse with nothing to list was accepted: %s", text)
 	}
 }

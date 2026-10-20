@@ -51,19 +51,30 @@ func register(s *mcp.Server, t *tools) {
 	}, t.listProfiles)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name: "create_profile",
+		Description: "Save a mailbox pair — source and destination connection details — as a " +
+			"profile, so later syncs can name it by profile_id. Passwords are stored encrypted " +
+			"on the server and never returned.",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
+	}, t.createProfile)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name: "browse_folders",
-		Description: "List the folders of a profile's SOURCE mailbox with message counts and sizes, " +
-			"to choose which folders to sync. Large mailboxes take minutes: if the answer has " +
-			"status \"running\", call again with the same profile_id — it joins the listing " +
+		Description: "List a mailbox's folders with message counts and sizes, to choose which " +
+			"folders to sync. Give profile_id to list that profile's SOURCE mailbox, or mailbox " +
+			"with connection details for any mailbox. Large mailboxes take minutes: if the answer " +
+			"has status \"running\", call again with the same arguments — it joins the listing " +
 			"already in progress rather than starting another.",
 		Annotations: readOnly,
 	}, t.browseFolders)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "start_sync",
-		Description: "Start copying mail for a profile. Returns the job; follow it with get_job " +
-			"(wait_seconds) and get_job_log. Use dry_run first on an unfamiliar pair: it connects " +
-			"and reports what would be copied without writing anything. Options that delete mail " +
+		Description: "Start copying mail from a source mailbox to a destination mailbox. Name a " +
+			"saved pair with profile_id, or give source and destination connection details " +
+			"directly. Returns the job; follow it with get_job (wait_seconds) and get_job_log. " +
+			"Use dry_run first on an unfamiliar pair: it connects and reports what would be " +
+			"copied without writing anything. Options that delete mail " +
 			"(" + strings.Join(destructiveOptions, ", ") + ") are refused unless the server was " +
 			"started with IMAPSYNC_MCP_ALLOW_DELETE=1.",
 		Annotations: &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
@@ -150,10 +161,91 @@ func (t *tools) listProfiles(ctx context.Context, _ *mcp.CallToolRequest, _ noIn
 	return result(out)
 }
 
+// mailbox is one side of a migration, as the model gives it.
+type mailbox struct {
+	Host     string `json:"host" jsonschema:"IMAP server, e.g. imap.gmail.com or mail.example.com"`
+	User     string `json:"user" jsonschema:"login, usually the full email address"`
+	Password string `json:"password" jsonschema:"password or app password"`
+	SSL      *bool  `json:"ssl,omitempty" jsonschema:"connect with SSL/TLS (default true, port 993)"`
+	Port     int    `json:"port,omitempty" jsonschema:"only if the server uses a non-standard port"`
+}
+
+func (m *mailbox) check(side string) error {
+	if m == nil {
+		return fmt.Errorf("%s mailbox is missing", side)
+	}
+	m.Host, m.User = strings.TrimSpace(m.Host), strings.TrimSpace(m.User)
+	if m.Host == "" || m.User == "" || m.Password == "" {
+		return fmt.Errorf("%s mailbox needs host, user and password", side)
+	}
+	return nil
+}
+
+func (m *mailbox) ssl() bool { return m.SSL == nil || *m.SSL }
+
+// pairBody is the API's flat host1/user1/... form of a source and destination,
+// with any non-standard ports carried as the port1/port2 imapsync options.
+func pairBody(src, dst *mailbox, extra map[string]any) map[string]any {
+	opts := map[string]any{}
+	for k, v := range extra {
+		opts[k] = v
+	}
+	if src.Port > 0 {
+		opts["port1"] = src.Port
+	}
+	if dst.Port > 0 {
+		opts["port2"] = dst.Port
+	}
+	body := map[string]any{
+		"host1": src.Host, "user1": src.User, "password1": src.Password, "ssl1": src.ssl(),
+		"host2": dst.Host, "user2": dst.User, "password2": dst.Password, "ssl2": dst.ssl(),
+	}
+	if len(opts) > 0 {
+		body["extra_options"] = opts
+	}
+	return body
+}
+
+type createProfileInput struct {
+	Name         string         `json:"name" jsonschema:"a label to tell this pair apart, e.g. the customer or account"`
+	Source       *mailbox       `json:"source" jsonschema:"the mailbox mail is copied from"`
+	Destination  *mailbox       `json:"destination" jsonschema:"the mailbox mail is copied to"`
+	ExtraOptions map[string]any `json:"extra_options,omitempty" jsonschema:"imapsync options saved with the profile, e.g. {\"automap\": true}"`
+}
+
+func (t *tools) createProfile(ctx context.Context, _ *mcp.CallToolRequest, in createProfileInput) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(in.Name) == "" {
+		return nil, nil, fmt.Errorf("name is required")
+	}
+	if err := in.Source.check("source"); err != nil {
+		return nil, nil, err
+	}
+	if err := in.Destination.check("destination"); err != nil {
+		return nil, nil, err
+	}
+	// Saved delete options would apply to every later run of the profile.
+	if err := t.refuseDeleting(in.ExtraOptions, false); err != nil {
+		return nil, nil, err
+	}
+	body := pairBody(in.Source, in.Destination, in.ExtraOptions)
+	body["name"] = strings.TrimSpace(in.Name)
+	var p apiProfile
+	if err := t.api.do(ctx, "POST", "/profiles", nil, body, &p); err != nil {
+		return nil, nil, err
+	}
+	return result(profileSummary{
+		ID: p.ID, Name: p.Name,
+		Source:       p.User1 + " @ " + p.Host1,
+		Destination:  p.User2 + " @ " + p.Host2,
+		ExtraOptions: p.ExtraOptions,
+	})
+}
+
 // ------------------------------------------------------------------- folders
 
 type browseInput struct {
-	ProfileID int64 `json:"profile_id" jsonschema:"the profile whose source mailbox to list"`
+	ProfileID int64    `json:"profile_id,omitempty" jsonschema:"the profile whose source mailbox to list"`
+	Mailbox   *mailbox `json:"mailbox,omitempty" jsonschema:"a mailbox to list, instead of profile_id"`
 }
 
 type browseTask struct {
@@ -164,9 +256,21 @@ type browseTask struct {
 }
 
 func (t *tools) browseFolders(ctx context.Context, _ *mcp.CallToolRequest, in browseInput) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{"async": true}
+	switch {
+	case in.ProfileID > 0:
+		body["profile_id"] = in.ProfileID
+	case in.Mailbox != nil:
+		if err := in.Mailbox.check("the"); err != nil {
+			return nil, nil, err
+		}
+		body["host"], body["user"], body["password"], body["ssl"] =
+			in.Mailbox.Host, in.Mailbox.User, in.Mailbox.Password, in.Mailbox.ssl()
+	default:
+		return nil, nil, fmt.Errorf("give profile_id or mailbox")
+	}
 	var task browseTask
-	if err := t.api.do(ctx, "POST", "/folders/browse", nil,
-		map[string]any{"profile_id": in.ProfileID, "async": true}, &task); err != nil {
+	if err := t.api.do(ctx, "POST", "/folders/browse", nil, body, &task); err != nil {
 		return nil, nil, err
 	}
 
@@ -188,7 +292,7 @@ func (t *tools) browseFolders(ctx context.Context, _ *mcp.CallToolRequest, in br
 	case "running":
 		return result(map[string]string{
 			"status": "running",
-			"note":   "Still listing — large mailboxes take minutes. Call browse_folders again with the same profile_id to keep waiting.",
+			"note":   "Still listing — large mailboxes take minutes. Call browse_folders again with the same arguments to keep waiting.",
 		})
 	}
 	return result(map[string]any{"status": "done", "folders": task.Folders})
@@ -197,46 +301,79 @@ func (t *tools) browseFolders(ctx context.Context, _ *mcp.CallToolRequest, in br
 // ---------------------------------------------------------------------- sync
 
 type startInput struct {
-	ProfileID    int64          `json:"profile_id"`
+	ProfileID    int64          `json:"profile_id,omitempty" jsonschema:"a saved pair; or give source and destination instead"`
+	Source       *mailbox       `json:"source,omitempty" jsonschema:"the mailbox mail is copied from, when not using profile_id"`
+	Destination  *mailbox       `json:"destination,omitempty" jsonschema:"the mailbox mail is copied to, when not using profile_id"`
 	Folders      []string       `json:"folders,omitempty" jsonschema:"folder names to sync; omit to sync every folder"`
 	DryRun       bool           `json:"dry_run,omitempty" jsonschema:"connect and report without writing anything"`
 	ExtraOptions map[string]any `json:"extra_options,omitempty" jsonschema:"imapsync options for this run, e.g. {\"automap\": true, \"maxage\": 30}; merged over the profile's saved options"`
 }
 
 func (t *tools) startSync(ctx context.Context, _ *mcp.CallToolRequest, in startInput) (*mcp.CallToolResult, any, error) {
-	if !t.allowDelete && !in.DryRun {
-		// The profile's saved options apply to the run too, so a delete
-		// option stored there would slip past a check of the arguments alone.
-		var p apiProfile
-		if err := t.api.do(ctx, "GET", "/profiles/"+strconv.FormatInt(in.ProfileID, 10), nil, nil, &p); err != nil {
+	var body map[string]any
+	switch {
+	case in.ProfileID > 0:
+		opts := in.ExtraOptions
+		if !t.allowDelete && !in.DryRun {
+			// The profile's saved options apply to the run too, so a delete
+			// option stored there would slip past a check of the arguments alone.
+			var p apiProfile
+			if err := t.api.do(ctx, "GET", "/profiles/"+strconv.FormatInt(in.ProfileID, 10), nil, nil, &p); err != nil {
+				return nil, nil, err
+			}
+			opts = map[string]any{}
+			for k, v := range p.ExtraOptions {
+				opts[k] = v
+			}
+			for k, v := range in.ExtraOptions {
+				opts[k] = v
+			}
+		}
+		if err := t.refuseDeleting(opts, in.DryRun); err != nil {
 			return nil, nil, err
 		}
-		merged := map[string]any{}
-		for k, v := range p.ExtraOptions {
-			merged[k] = v
+		body = map[string]any{"profile_id": in.ProfileID}
+		if len(in.ExtraOptions) > 0 {
+			body["extra_options"] = in.ExtraOptions
 		}
-		for k, v := range in.ExtraOptions {
-			merged[k] = v
+	case in.Source != nil || in.Destination != nil:
+		if err := in.Source.check("source"); err != nil {
+			return nil, nil, err
 		}
-		if found := deletingOptions(merged); len(found) > 0 {
-			return nil, nil, fmt.Errorf("refused: %s would delete mail. This MCP server only runs "+
-				"such syncs when started with IMAPSYNC_MCP_ALLOW_DELETE=1; a dry_run is allowed",
-				strings.Join(found, ", "))
+		if err := in.Destination.check("destination"); err != nil {
+			return nil, nil, err
 		}
+		if err := t.refuseDeleting(in.ExtraOptions, in.DryRun); err != nil {
+			return nil, nil, err
+		}
+		body = pairBody(in.Source, in.Destination, in.ExtraOptions)
+	default:
+		return nil, nil, fmt.Errorf("give profile_id, or source and destination")
 	}
 
-	body := map[string]any{"profile_id": in.ProfileID, "dry_run": in.DryRun}
+	body["dry_run"] = in.DryRun
 	if len(in.Folders) > 0 {
 		body["folders"] = in.Folders
-	}
-	if len(in.ExtraOptions) > 0 {
-		body["extra_options"] = in.ExtraOptions
 	}
 	var job json.RawMessage
 	if err := t.api.do(ctx, "POST", "/sync/start", nil, body, &job); err != nil {
 		return nil, nil, err
 	}
 	return result(job)
+}
+
+// refuseDeleting fails when opts would delete mail and this server was not
+// configured to allow it. A dry run writes nothing, so it is always let through.
+func (t *tools) refuseDeleting(opts map[string]any, dryRun bool) error {
+	if t.allowDelete || dryRun {
+		return nil
+	}
+	if found := deletingOptions(opts); len(found) > 0 {
+		return fmt.Errorf("refused: %s would delete mail. This MCP server only runs "+
+			"such syncs when started with IMAPSYNC_MCP_ALLOW_DELETE=1; a dry_run is allowed",
+			strings.Join(found, ", "))
+	}
+	return nil
 }
 
 // deletingOptions returns the destructive options switched on in opts, sorted.

@@ -7,6 +7,7 @@
 //
 //	IMAPSYNC_URL               the site, e.g. https://sync.example.com
 //	IMAPSYNC_API_KEY           an isk_ key; sync:read, sync:write, profiles:read
+//	                           (and profiles:write for create_profile)
 //	IMAPSYNC_MCP_ALLOW_DELETE  1 to allow delete1/delete2/expunge options
 package main
 
@@ -25,8 +26,10 @@ const version = "0.1.0"
 func newServer(api *Client, allowDelete bool) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "imapsync", Version: version}, &mcp.ServerOptions{
 		Instructions: "Drives mailbox migrations on an imapsync web server. Typical flow: " +
-			"list_profiles → optionally browse_folders → start_sync (dry_run first for a new pair) → " +
-			"get_job with wait_seconds until it stops running → get_job_log to explain failures.",
+			"list_profiles, or take source and destination connection details from the user → " +
+			"optionally browse_folders → start_sync (dry_run first for a new pair) → get_job with " +
+			"wait_seconds until it stops running → get_job_log to explain failures. Offer " +
+			"create_profile when a pair given by hand is likely to be synced again.",
 	})
 	register(s, &tools{api: api, allowDelete: allowDelete})
 	return s
