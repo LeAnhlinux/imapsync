@@ -670,6 +670,316 @@ The API takes mailbox passwords, so:
 
 ---
 
+## 12. MCP server: architecture
+
+`web/mcp` is an [MCP](https://modelcontextprotocol.io) server built entirely
+on this API: no database, no shared code with the backend, no endpoint of its
+own. This section describes it closely enough to rebuild it elsewhere — in
+particular as a **central gateway** that manages several imapsync servers from
+one place (see [12.9](#129-building-a-central-gateway)). For setup and day-to-day use, see
+[`web/mcp/HUONG_DAN.md`](web/mcp/HUONG_DAN.md) (Vietnamese) and
+[`web/mcp/README.md`](web/mcp/README.md).
+
+### 12.1 Topology
+
+```
+ user's machine                                   imapsync server
+┌─────────────────────────────────────┐          ┌──────────────────────────────┐
+│ Claude Code / Claude Desktop        │          │ nginx :443                   │
+│   │  MCP JSON-RPC over stdio        │          │   │                          │
+│   ▼                                 │  HTTPS   │   ▼                          │
+│ imapsync-mcp (one Go binary) ───────┼─────────►│ imapsync-web /api/*          │
+│   • 46 tools                        │ X-API-Key│   • scopes, rate limit       │
+│   • delete-mail guard               │          │   • runner → imapsync (Perl) │
+│   • polling for slow calls          │          │   • SQLite, job logs         │
+└─────────────────────────────────────┘          └──────────────────────────────┘
+```
+
+- **Process model.** The client launches the binary and talks to it over
+  stdin/stdout. One process per client session; it holds no state between
+  calls, so it can be killed and restarted at any time.
+- **Where work happens.** Every sync runs on the server. The MCP server only
+  makes HTTP calls, so closing the client never stops a job.
+- **Trust boundary.** The API key decides what is possible (scopes, rate
+  limit). The MCP server narrows it further — the delete guard — but never
+  widens it.
+
+### 12.2 Code layout
+
+| File | Contents |
+|---|---|
+| `main.go` | env config, `newServer()` (name `imapsync`, version, server instructions), stdio transport |
+| `client.go` | `Client`: base URL normalisation, `X-API-Key`, JSON in/out, error mapping |
+| `tools.go` | the tools with logic of their own: profiles, folders, sync, logs, history; the delete guard |
+| `tools_more.go` | `apiTool()` — the generic one-call tool — and the 36 tools built on it |
+| `server_test.go` | every behaviour against a fake API, through a real MCP client (in-memory transport) |
+| `e2e_test.go` | every tool against a real server; fails if a tool is added without coverage |
+| `manifest.sh`, `Makefile` | cross-builds and the download manifest |
+
+Dependencies: Go 1.25, `github.com/modelcontextprotocol/go-sdk` v1.8.0, and
+the standard library.
+
+### 12.3 Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `IMAPSYNC_URL` | yes | site root, with or without `/api`; normalised to `<root>/api` |
+| `IMAPSYNC_API_KEY` | yes | must start with `isk_` — a session JWT is refused at startup |
+| `IMAPSYNC_MCP_ALLOW_DELETE` | no | `1` turns the delete guard off |
+
+Logs go to stderr only: stdout is the protocol channel.
+
+### 12.4 The request path
+
+One function, `Client.do(ctx, method, path, query, body, out)`, makes every
+call:
+
+1. URL = `base + path`, plus `?query` when given.
+2. Headers: `X-API-Key: <key>`; `Content-Type: application/json` when there
+   is a body.
+3. HTTP client timeout **150 s** — above the longest server hold
+   (`GET /sync/{id}?wait=120`).
+4. Status ≥ 300 becomes `APIError{Status, Detail}`, `Detail` taken from the
+   body's `{"detail": ...}` (raw body if absent). The tool returns it as an
+   MCP error result: `isError: true`, text
+   `imapsync API answered 403: This API key does not carry the "sync:write" scope`.
+   The model reads that and can tell the user what to fix.
+5. Success: the JSON body is passed back to the model unchanged (or `{"status":"ok"}`
+   for an empty body). No reshaping, except `list_profiles` / `create_profile`,
+   which summarise a profile as `{id, name, source: "user @ host", destination, extra_options}`.
+
+Tool annotations: read-only tools carry `readOnlyHint`; tools that delete or
+stop something carry `destructiveHint: true`, which makes clients such as
+Claude Code ask before calling them; all carry `openWorldHint`.
+
+### 12.5 Tool catalog
+
+Every endpoint in the [appendix](#appendix-every-endpoint) has a tool except
+`POST /batch/upload` (the multipart twin of `create_batch`) and the job
+WebSocket (replaced by `get_job` + `get_job_log`). IDs in paths are integers;
+parameters marked ? are optional.
+
+| Tool | Calls | Scope | Arguments / behaviour |
+|---|---|---|---|
+| `whoami` | `GET /auth/me` | — | |
+| `list_profiles` | `GET /profiles` | profiles:read | summarised |
+| `get_profile` | `GET /profiles/{id}` | profiles:read | `profile_id` |
+| `create_profile` | `POST /profiles` | profiles:write | `name`, `source`, `destination`, `extra_options?` — see 12.6 |
+| `update_profile` | `PUT /profiles/{id}` | profiles:write | `profile_id`, `name?`, `source?`, `destination?` (every field optional), `extra_options?` |
+| `delete_profile` | `DELETE /profiles/{id}` | profiles:write | destructive |
+| `browse_folders` | `POST /folders/browse` + `GET /folders/browse/{task}` | profiles:read | `profile_id` or `mailbox` — see 12.6 |
+| `start_sync` | `GET /profiles/{id}` (guard) + `POST /sync/start` | sync:write | see 12.6 |
+| `get_job` | `GET /sync/{id}?wait=` | sync:read | `job_id`, `wait_seconds?` capped at 120 |
+| `get_job_log` | `GET /sync/{id}/log` | sync:read | `job_id`, `offset?` → `?offset=`; else `tail?` (default 100) → `?tail=` |
+| `list_running_jobs` | `GET /sync/running` | sync:read | |
+| `abort_job` | `POST /sync/{id}/abort` | sync:write | destructive |
+| `delete_job` | `DELETE /sync/{id}` | sync:write | destructive |
+| `list_history` | `GET /history` | sync:read | `status?`, `query?` → `q`, `page?`, `per_page?` (default 20, cap 100) |
+| `history_stats` | `GET /history/stats` | sync:read | |
+| `purge_history` | `POST /history/purge` | sync:write | `older_than_days` (required; 0 = all finished); destructive |
+| `get_history_retention` | `GET /history/retention` | sync:read | |
+| `set_history_retention` | `PUT /history/retention` | sync:write | `enabled`, `keep_days`; destructive |
+| `run_history_retention` | `POST /history/retention/run` | sync:write | destructive |
+| `create_batch` | `POST /batch/upload-text?…` | batch:write | `csv_text`; `dry_run?`, `ssl1?`, `ssl2?`, `automap?`, `usecache?` → query string; delete guard on the CSV |
+| `start_batch` | `POST /batch/{id}/start` | batch:write | `batch_id` |
+| `get_batch` | `GET /batch/{id}` | sync:read | `batch_id` |
+| `abort_batch` | `POST /batch/{id}/abort` | batch:write | destructive |
+| `list_schedules` | `GET /schedules` | schedules:read | |
+| `create_schedule` | `POST /schedules` | schedules:write | `profile_id`, `cron_expression`, `is_active?` |
+| `update_schedule` | `PUT /schedules/{id}` | schedules:write | `schedule_id`, `cron_expression?`, `is_active?` |
+| `delete_schedule` | `DELETE /schedules/{id}` | schedules:write | destructive |
+| `get_email_notifications` | `GET /notifications/settings` | admin | |
+| `update_email_notifications` | `PUT /notifications/settings` | admin | any of `smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `from_email`, `to_email`, `notify_on_success`, `notify_on_failure` |
+| `test_email_notifications` | `POST /notifications/test` | admin | |
+| `get_telegram` | `GET /telegram/settings` | admin | |
+| `update_telegram` | `PUT /telegram/settings` | admin | any of `enabled`, `bot_token`, `allowed_chat_ids`, `user_id`, `notify_on_success`, `notify_on_failure`, `notify_on_progress`, `progress_step` |
+| `telegram_status` | `GET /telegram/status` | admin | |
+| `test_telegram` | `POST /telegram/test` | admin | |
+| `list_api_keys` | `GET /api-keys` | admin | |
+| `list_api_key_scopes` | `GET /api-keys/scopes` | admin | |
+| `create_api_key` | `POST /api-keys` | admin | `name`, `scopes`, `rate_limit_per_minute?`, `expires_in_days?`; the key is in the answer only |
+| `update_api_key` | `PUT /api-keys/{id}` | admin | `key_id`, `name?`, `scopes?`, `rate_limit_per_minute?` |
+| `revoke_api_key` | `POST /api-keys/{id}/revoke` | admin | destructive |
+| `delete_api_key` | `DELETE /api-keys/{id}` | admin | destructive |
+| `list_webhooks` | `GET /webhooks` | admin | |
+| `list_webhook_events` | `GET /webhooks/events` | admin | |
+| `create_webhook` | `POST /webhooks` | admin | `url`, `events?`, `is_active?`; the secret is in the answer only |
+| `update_webhook` | `PUT /webhooks/{id}` | admin | `webhook_id`, `url?`, `events?`, `is_active?` |
+| `test_webhook` | `POST /webhooks/{id}/test` | admin | |
+| `delete_webhook` | `DELETE /webhooks/{id}` | admin | destructive |
+
+The one-call tools are declared, not hand-written: `apiTool(server, tool,
+build)` takes a function from the typed arguments to `{method, path, query,
+body}`. For updates, `bodyOf(input, "<id field>")` marshals the arguments and
+drops the path ID; optional fields are pointers with `omitempty`, so only what
+the model set is sent and the API keeps the rest (`PUT` here means *patch*).
+
+### 12.6 Tools with behaviour of their own
+
+**Mailbox arguments.** `source`, `destination` and `mailbox` share one shape:
+
+```json
+{ "host": "imap.example.com", "user": "me@example.com", "password": "…",
+  "ssl": true, "port": 993 }
+```
+
+`ssl` defaults to true; `port` is optional. They flatten to the API's form:
+`host1/user1/password1/ssl1`, `host2/…/ssl2`, and a port becomes the imapsync
+option `port1` / `port2` inside `extra_options`. Host, user and password are
+required (trimmed); otherwise the tool fails before calling the API.
+
+**`start_sync`** takes either `profile_id` or `source` + `destination`, plus
+`folders?`, `dry_run?`, `extra_options?`.
+
+- By profile: `{profile_id, dry_run, folders?, extra_options?}`. Unless it is a
+  dry run or the guard is off, it first reads `GET /profiles/{id}` and checks
+  the profile's saved options merged with the call's — saved options apply to
+  the run, so checking only the call would let a stored `delete1` through.
+- By hand: the flattened pair plus `dry_run`, `folders?`; the guard checks the
+  call's options.
+- Neither given: an error naming what to pass.
+
+**`browse_folders`** takes `profile_id` or `mailbox`:
+
+1. `POST /folders/browse` with `"async": true` → `202 {id, status:"running"}`.
+2. Poll `GET /folders/browse/{id}` every **3 s** for up to **45 s**.
+3. `done` → `{status:"done", folders:[{name, messages, size}]}`;
+   `failed` → tool error with the server's message;
+   still running → `{status:"running", note:"call browse_folders again with the same arguments"}`.
+
+Calling again is cheap: the server returns the listing already running for the
+same user and mailbox instead of starting another, and keeps finished results
+for 15 minutes (in memory — a server restart loses them, answered with 404).
+
+**`get_job`** with `wait_seconds` maps to `?wait=` (cap 120): the server holds
+the request until the job leaves `running`. A client keeps waiting by calling
+again; each call costs one request of rate limit.
+
+**`get_job_log`** defaults to the last 100 lines. To follow a live job:
+`tail` once, then `offset = next_offset` repeatedly; an empty `log` means
+nothing new.
+
+### 12.7 The delete guard
+
+Refuses, unless `IMAPSYNC_MCP_ALLOW_DELETE=1` or the run is a dry run, any of
+`delete1`, `delete2`, `delete2duplicates`, `expunge1`, `expunge2` that is
+*switched on*: present and not `null`, `false`, `0`, `""`, `"0"` or `"false"`.
+
+| Where | What is checked |
+|---|---|
+| `start_sync` by profile | profile's saved options ∪ the call's |
+| `start_sync` by hand | the call's options |
+| `create_profile`, `update_profile` | the options being saved (a dry run does not exempt these) |
+| `create_batch` | the CSV text, regex `--(delete1\|delete2\|delete2duplicates\|expunge1\|expunge2)\b`, unless `dry_run` |
+
+The error says which option and how to allow it. The server accepts these
+options on purpose (deleting from the source after a migration is legitimate);
+the guard exists because a model should not reach for them on its own.
+
+### 12.8 Distribution and tests
+
+- `make downloads` cross-builds `imapsync-mcp-{darwin-arm64,darwin-amd64,linux-amd64,windows-amd64.exe}`,
+  copies `HUONG_DAN.md`, and writes `manifest.json`:
+  ```json
+  { "version": "0.2.0", "guide": "HUONG_DAN.md",
+    "files": [{ "name": "imapsync-mcp-darwin-arm64", "os": "darwin", "arch": "arm64",
+                "size": 8034770, "sha256": "…" }] }
+  ```
+- `deploy.sh` puts that directory at `/downloads/mcp/`; the API Access page
+  reads the manifest to show download buttons and the install commands.
+- `go test ./...` runs against a fake API. `TestEndToEnd`
+  (`IMAPSYNC_E2E_URL`, `IMAPSYNC_E2E_KEY` with `admin`) drives all 46 tools
+  against a real server — run it on a throwaway instance whose
+  `IMAPSYNC_PATH` is a stub.
+
+### 12.9 Building a central gateway
+
+To manage several imapsync servers from one place, put a gateway between the
+clients and the servers. Nothing on the imapsync side needs to change: each
+server is reached through this API with its own key.
+
+```
+ Claude / scripts / dashboards
+            │  MCP (Streamable HTTP) and/or HTTP
+            ▼
+   ┌───────────────────────────┐        ┌──────────────────────┐
+   │ gateway                   │──key A─►│ imapsync server A    │
+   │  • instance registry      │──key B─►│ imapsync server B    │
+   │  • its own users + auth   │──key C─►│ imapsync server C    │
+   │  • routing, aggregation   │        └──────────────────────┘
+   │  • webhook receiver ◄─────┼──── job.* events from every server
+   │  • audit log, policy      │
+   └───────────────────────────┘
+```
+
+**What carries over unchanged**
+
+- The request path (12.4), the mailbox shape and flattening (12.6), the
+  polling for `browse_folders`, `wait` and log paging, and the delete guard
+  (12.7) — these are about the API, not about where the caller runs.
+- The tool catalog (12.5), each tool gaining one argument (below).
+
+**Instance registry.** One record per server:
+`{id, name, base_url, api_key (encrypted at rest), scopes, enabled}`. Issue
+each server's key in its own **API Access** page with only the scopes the
+gateway needs; `update_api_key` / **Edit** changes scopes later without
+replacing the key. Check a new record with `GET /auth/me` (and
+`GET /api-keys/scopes`, which answers 403 unless the key has `admin`).
+
+**Routing.** Every per-server tool takes an `instance` argument (name or id).
+IDs — jobs, profiles, batches, schedules, keys, webhooks — are per-server
+integers and collide across servers, so return and accept a qualified form
+such as `"srvA:42"`, or always pair `instance` with the id.
+
+**Tools only a gateway can have**
+
+| Tool | Does |
+|---|---|
+| `list_instances` | registry entries with health (`GET /api/health`) and key validity |
+| `list_running_jobs_all` | `GET /sync/running` on every instance, merged, each job tagged with its instance |
+| `history_stats_all` | `GET /history/stats` everywhere; sum `total_syncs`, `successful`, `failed`, `total_messages`, `total_bytes`, recompute `success_rate` |
+| `find_job` | search `GET /history?q=` across instances by account name |
+| `pick_instance` | choose where to run a new sync, e.g. fewest running jobs |
+
+**Events instead of polling.** Register one webhook per server
+(`create_webhook`, `url` = the gateway's receiver, events `*`). Store each
+signing secret against its instance; verify `X-Imapsync-Signature`
+(`sha256=` HMAC-SHA256 of the raw body, constant-time compare) before trusting
+a delivery; identify the instance by the secret that verifies, or by a path
+such as `/hooks/<instance>`. Payload: [section 4](#webhooks--the-server-calls-you).
+Deliveries retry twice (1 s, 3 s) — make the receiver idempotent on
+`(instance, job.id, event)`. With events stored centrally, "what finished"
+needs no polling at all; `get_job` with `wait_seconds` remains for a caller
+that wants to block.
+
+**Limits to design around**
+
+- **Rate limit is per key** (default 60/min, max 10000). A fan-out tool makes
+  one request per instance per call; give the gateway's keys a higher limit,
+  and treat `429` + `Retry-After` per instance, not globally.
+- **Timeouts.** Hold client requests at least 150 s if you proxy `?wait=`;
+  never proxy the synchronous `/folders/browse` — use `"async": true`.
+- **Batches** run rows one at a time per server. To spread a large migration,
+  split the CSV across instances and create one batch on each.
+- **Credentials.** Passwords given by hand reach the gateway and each server in
+  request bodies. Keep the gateway on HTTPS end to end, never log request
+  bodies, and prefer profiles (encrypted on each server) for repeat pairs.
+- **Admin scope.** A key with `admin` can issue more keys on that server. Hold
+  such keys only if the gateway really administers servers, and keep them out
+  of the MCP-facing path otherwise.
+
+**Gateway policy.** The gateway is the natural place for rules that span
+servers: who may touch which instance, the delete guard applied once for
+everyone, an audit log of every write (`start_sync`, `abort_job`, deletes) with
+the gateway user who asked, and per-user quotas.
+
+**Transport.** A central gateway runs as a service, so expose MCP over
+**Streamable HTTP** (the Go SDK's `mcp.NewStreamableHTTPHandler`) instead of
+stdio, behind the gateway's own authentication (OAuth or per-user tokens) —
+never by sharing an imapsync API key with users.
+
+---
+
 ## Appendix: every endpoint
 
 | Method | Path | Scope |
