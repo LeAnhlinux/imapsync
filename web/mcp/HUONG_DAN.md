@@ -12,7 +12,13 @@ tiếp.
 
 ## 1. Chuẩn bị binary
 
-Đã có Go (1.25 trở lên):
+**Cách nhanh nhất — tải từ web:** đăng nhập https://sync.wppanel.io.vn →
+**API Access** → mục **Use with Claude (MCP)**. Có sẵn bản cho macOS (Apple
+Silicon / Intel), Windows và Linux; nút đúng máy bạn được tô sẵn. Ngay bên
+dưới là lệnh cài với địa chỉ trang điền sẵn — vừa tạo key xong thì key cũng
+được điền sẵn, chỉ việc copy.
+
+Tự build từ mã nguồn (cần Go 1.25 trở lên):
 
 ```bash
 cd web/mcp
