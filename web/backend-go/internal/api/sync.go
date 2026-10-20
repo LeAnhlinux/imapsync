@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -98,7 +100,52 @@ func (s *Server) getSync(w http.ResponseWriter, r *http.Request) {
 	if storeErr(w, err, "Job not found") {
 		return
 	}
+	if wait := min(queryInt(r, "wait", 0), maxJobWait); wait > 0 && job.Status == "running" {
+		job, err = s.waitForJob(r.Context(), job, time.Duration(wait)*time.Second)
+		if storeErr(w, err, "Job not found") {
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// maxJobWait caps ?wait=, in seconds. Long enough that a waiting program makes
+// one request a minute or two, short enough to stay under client timeouts.
+const maxJobWait = 120
+
+// waitForJob holds GET /sync/{id}?wait=N until the job stops running or the
+// time is up, whichever is first. A program waiting for a sync otherwise has to
+// poll, and every poll spends its key's rate limit; this is one request.
+func (s *Server) waitForJob(ctx context.Context, job *store.SyncJob, d time.Duration) (*store.SyncJob, error) {
+	deadline := time.NewTimer(d)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+
+	// The runner closes done before OnComplete writes the outcome, so done only
+	// means "look now" — the row decides, and the ticker covers the gap.
+	var done <-chan struct{}
+	if live := s.Runner.Get(job.ID); live != nil {
+		done = live.Done()
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return job, nil
+		case <-deadline.C:
+			return job, nil
+		case <-done:
+			done = nil
+		case <-tick.C:
+		}
+		next, err := s.DB.JobByIDForUser(job.ID, job.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if job = next; job.Status != "running" {
+			return job, nil
+		}
+	}
 }
 
 func (s *Server) abortSync(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +179,53 @@ func (s *Server) syncLog(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.DB.JobByIDForUser(id, userFrom(r).ID); storeErr(w, err, "Job not found") {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"log": s.Runner.LogFor(id)})
+	text := s.Runner.LogFor(id)
+	part, next := text, len(text)
+	if q := r.URL.Query(); q.Has("tail") || q.Has("offset") {
+		part, next = sliceLog(text, queryInt(r, "offset", 0), min(queryInt(r, "tail", 0), maxLogTail))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"log": part, "size": len(text), "next_offset": next})
+}
+
+const (
+	// maxLogPage bounds one ?offset= read. A finished migration's log runs to
+	// megabytes, more than a program — an MCP tool feeding a model above all —
+	// can take in one piece.
+	maxLogPage = 256 << 10
+	maxLogTail = 5000
+)
+
+// sliceLog picks the part of a log a request asked for, and the offset to ask
+// for next. Without either parameter the handler skips it and returns the whole
+// log, which is what the web UI reads. tail wins over offset: it is the "what is
+// happening now" read, and its next offset lets the caller follow on from there.
+func sliceLog(text string, offset, tail int) (string, int) {
+	if tail > 0 {
+		start := len(text)
+		// A trailing newline ends the last line rather than starting an empty one.
+		if start > 0 && text[start-1] == '\n' {
+			start--
+		}
+		for n := 0; n < tail && start > 0; n++ {
+			start = strings.LastIndexByte(text[:start], '\n') + 1
+			// Step back over the newline to reach the line before, except after
+			// the last line wanted.
+			if n < tail-1 && start > 0 {
+				start--
+			}
+		}
+		return text[start:], len(text)
+	}
+	offset = min(max(offset, 0), len(text))
+	end := min(offset+maxLogPage, len(text))
+	// End a page on a line boundary, so no line — or UTF-8 sequence — is split
+	// across two reads.
+	if end < len(text) {
+		if i := strings.LastIndexByte(text[offset:end], '\n'); i >= 0 {
+			end = offset + i + 1
+		}
+	}
+	return text[offset:end], end
 }
 
 // jobWebSocket streams a job's output. It authenticates from the query string

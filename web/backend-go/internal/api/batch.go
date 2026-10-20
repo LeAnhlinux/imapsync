@@ -126,6 +126,9 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 		User      string `json:"user"`
 		Password  string `json:"password"`
 		SSL       *bool  `json:"ssl"`
+		// Async returns a task to poll instead of holding the request open for
+		// the minutes a large mailbox takes. See browse.go.
+		Async bool `json:"async"`
 	}
 	if !decodeJSON(w, r, &b) {
 		return
@@ -146,6 +149,12 @@ func (s *Server) browseFolders(w http.ResponseWriter, r *http.Request) {
 	}
 	if host == "" || user == "" || password == "" {
 		writeError(w, http.StatusBadRequest, "Provide profile_id, or host, user and password")
+		return
+	}
+
+	if b.Async {
+		writeJSON(w, http.StatusAccepted, browseJobs.start(userFrom(r).ID, user+"@"+host,
+			func() ([]FolderInfo, error) { return s.Folders.Browse(host, user, password, ssl) }))
 		return
 	}
 

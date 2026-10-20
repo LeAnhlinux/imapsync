@@ -146,6 +146,7 @@ func (s *Server) Routes() http.Handler {
 			r.With(requireScope("schedules:write")).Delete("/schedules/{id}", s.deleteSchedule)
 
 			r.With(requireScope("profiles:read")).Post("/folders/browse", s.browseFolders)
+			r.With(requireScope("profiles:read")).Get("/folders/browse/{id}", s.browseResult)
 
 			r.With(requireScope("batch:write")).Post("/batch/upload", s.batchUpload)
 			r.With(requireScope("batch:write")).Post("/batch/upload-text", s.batchUploadText)

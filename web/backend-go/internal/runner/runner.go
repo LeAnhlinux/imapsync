@@ -264,6 +264,10 @@ func (j *Job) PID() int {
 // runs one mailbox at a time.
 func (j *Job) Wait() { <-j.done }
 
+// Done is closed when the process exits — before OnComplete has recorded the
+// outcome, so a reader still has to look at the database for the status.
+func (j *Job) Done() <-chan struct{} { return j.done }
+
 // What imapsync actually prints. Verified against a 9,802-line log from a real
 // run, not inferred: an earlier version of this file looked for
 // "Syncing folder [x] (n/m)", which appears nowhere in imapsync's output, so

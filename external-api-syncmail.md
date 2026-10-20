@@ -200,10 +200,30 @@ job did not finish.
 | Method | Path | Scope | Purpose |
 |---|---|---|---|
 | GET | `/api/sync/running` | `sync:read` | jobs running right now |
-| GET | `/api/sync/{id}` | `sync:read` | one job |
-| GET | `/api/sync/{id}/log` | `sync:read` | `{"log": "..."}` — live buffer, or the saved file |
+| GET | `/api/sync/{id}` | `sync:read` | one job; `?wait=N` holds the request until it stops running (see [Waiting](#waiting)) |
+| GET | `/api/sync/{id}/log` | `sync:read` | the log — whole, the last lines, or a page (see [Reading the log](#reading-the-log)) |
 | POST | `/api/sync/{id}/abort` | `sync:write` | SIGTERM, escalating to SIGKILL after 5s |
 | DELETE | `/api/sync/{id}` | `sync:write` | delete the job and its saved log |
+
+### Reading the log
+
+Without parameters, `GET /api/sync/{id}/log` returns the whole log. A finished
+migration's log runs to megabytes, so a program usually wants part of it:
+
+| Query | Returns |
+|---|---|
+| *(none)* | the whole log |
+| `?tail=200` | the last 200 lines (at most 5000) |
+| `?offset=N` | up to 256 KB from byte `N`, ending on a line boundary |
+
+```json
+{ "log": "...", "size": 1843920, "next_offset": 1843920 }
+```
+
+`size` is the log's length in bytes now. To follow a running job, start with
+`?tail=50` and then keep asking for `?offset=<next_offset>`; an empty `log`
+means nothing new has been written yet. To read a whole log in pages, start at
+`?offset=0` and stop when `next_offset` equals `size`.
 
 An aborted job keeps `status: "aborted"` — imapsync exits non-zero when
 signalled, and that is not recorded as a failure.
@@ -349,6 +369,18 @@ else is emitted while it runs.
 
 You may only open a socket for your own jobs; anyone else's is 403.
 
+### Waiting
+
+`GET /api/sync/{id}?wait=60` answers as soon as the job is no longer
+`running`, or after 60 seconds with the job still running — whichever comes
+first. `wait` is in seconds, at most 120. One waiting request costs one request
+against the key's rate limit, so a loop of these is the cheapest way to block
+until a sync finishes:
+
+```bash
+until [ "$(curl -s "$BASE/sync/$JOB?wait=120" -H "X-API-Key: $KEY" | jq -r .status)" != "running" ]; do :; done
+```
+
 ### Polling
 
 `GET /api/sync/{id}` until `status` is no longer `running`. Simplest, but mind
@@ -396,6 +428,23 @@ asynchronously and tell your user to wait.
 ```json
 [{ "name": "INBOX", "messages": 1420, "size": 98765432 }]
 ```
+
+**Asynchronous form.** Add `"async": true` and the request answers at once
+with **202** and a task, instead of being held open:
+
+```json
+{ "profile_id": 1, "async": true }
+```
+
+```json
+{ "id": "5f0c1e…", "status": "running" }
+```
+
+Then poll `GET /api/folders/browse/{id}` (scope `profiles:read`) until `status`
+is `done` — with `folders` holding the list above — or `failed`, with `error`.
+A listing of the same mailbox that is still running is returned rather than
+started twice, so retrying is safe. A finished listing stays readable for 15
+minutes.
 
 ---
 
@@ -573,9 +622,7 @@ echo "started job $JOB"
 With a webhook registered, that is the whole client. Without one:
 
 ```bash
-until [ "$(curl -s "$BASE/sync/$JOB" -H "X-API-Key: $KEY" | jq -r .status)" != "running" ]; do
-  sleep 10
-done
+until [ "$(curl -s "$BASE/sync/$JOB?wait=120" -H "X-API-Key: $KEY" | jq -r .status)" != "running" ]; do :; done
 curl -s "$BASE/sync/$JOB" -H "X-API-Key: $KEY" | jq '{status, messages_transferred, errors_count}'
 ```
 
@@ -634,6 +681,7 @@ The API takes mailbox passwords, so:
 | PUT | `/api/profiles/{id}` | `profiles:write` |
 | DELETE | `/api/profiles/{id}` | `profiles:write` |
 | POST | `/api/folders/browse` | `profiles:read` |
+| GET | `/api/folders/browse/{id}` | `profiles:read` |
 | POST | `/api/sync/start` | `sync:write` |
 | POST | `/api/sync/{id}/abort` | `sync:write` |
 | DELETE | `/api/sync/{id}` | `sync:write` |
