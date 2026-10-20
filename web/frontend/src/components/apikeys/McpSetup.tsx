@@ -20,7 +20,38 @@ interface McpFile {
 interface McpManifest {
   version: string
   files: McpFile[]
+  /** The full Vietnamese guide, beside the binaries; absent on older deploys. */
+  guide?: string
 }
+
+// What to say to Claude once it is connected. In Vietnamese, as the people who
+// use this site write to it; Claude answers in whatever language it is asked.
+const askExamples: { title: string; prompts: string[] }[] = [
+  {
+    title: 'Copy mail',
+    prompts: [
+      'Chuyển mail từ a@cu.com (server mail.cu.com, mật khẩu ...) sang a@moi.com (server imap.moi.com, mật khẩu ...). Chạy thử trước, ổn thì chuyển thật.',
+      'Chuyển mail profile Công ty A, chỉ INBOX và Sent, mail trong 90 ngày gần nhất.',
+      'Lưu cặp mailbox vừa rồi thành profile tên Công ty A.',
+    ],
+  },
+  {
+    title: 'Watch and explain',
+    prompts: [
+      'Chờ job vừa chạy xong rồi tóm tắt kết quả cho tôi.',
+      'Đang có job nào chạy không? Dừng job 42 lại.',
+      'Job 42 sao bị lỗi? Đọc log và giải thích.',
+    ],
+  },
+  {
+    title: 'Many mailboxes, schedules, history',
+    prompts: [
+      'Chuyển các mailbox sau từ mail.cu.vn sang mail.moi.vn: nv1@cu.vn / pass1 → nv1@moi.vn / pass1, nv2@cu.vn / pass2 → nv2@moi.vn / pass2. Chạy thử trước.',
+      'Cứ 3 giờ sáng mỗi ngày đồng bộ lại profile Công ty A.',
+      'Tuần này chuyển được bao nhiêu mail? Job nào lỗi?',
+    ],
+  },
+]
 
 const platformLabel: Record<string, string> = {
   'darwin-arm64': 'macOS · Apple Silicon',
@@ -64,6 +95,36 @@ function CodeBlock({ text }: { text: string }) {
         {state === 'done' ? 'Copied' : state === 'failed' ? 'Select it' : 'Copy'}
       </Button>
     </div>
+  )
+}
+
+// A sample prompt that copies itself when clicked: the quickest way to try one.
+function Example({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        } catch {
+          // Nothing to undo: the text is on screen to select by hand.
+        }
+      }}
+      className="group flex w-full items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+    >
+      <span className="min-w-0 flex-1">“{text}”</span>
+      {copied ? (
+        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-label="Copied" />
+      ) : (
+        <Copy
+          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
+          aria-hidden
+        />
+      )}
+    </button>
   )
 }
 
@@ -136,6 +197,18 @@ export function McpSetup({ newKey }: { newKey: string | null }) {
     <Section
       title="Use with Claude (MCP)"
       description="Let Claude start, watch and explain syncs for you — in plain words, through this API."
+      aside={
+        manifest?.guide && (
+          <a
+            href={`/downloads/mcp/${manifest.guide}`}
+            download
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            <Download className="mr-1.5 h-3.5 w-3.5" />
+            Full guide (Vietnamese)
+          </a>
+        )
+      }
     >
       {unavailable ? (
         <p className="text-sm text-muted-foreground">
@@ -217,8 +290,7 @@ export function McpSetup({ newKey }: { newKey: string | null }) {
                 {isWindows
                   ? 'Use the full path to where you saved the file. '
                   : 'Moved the file? Use its new path. '}
-                Then start a new Claude Code session and ask, for example,{' '}
-                <span className="italic">“copy mail from a@old.com to b@new.com”</span>.
+                Then start a new Claude Code session.
               </p>
               <details className="text-sm">
                 <summary className="cursor-pointer text-muted-foreground">
@@ -231,6 +303,48 @@ export function McpSetup({ newKey }: { newKey: string | null }) {
                 </p>
                 <CodeBlock text={desktopConfig} />
               </details>
+            </Step>
+
+            <Step n={4} title="Ask Claude">
+              <p className="text-sm text-muted-foreground">
+                Say what you want in plain words — Claude picks the tools. Click an example to copy
+                it.
+              </p>
+              <div className="grid gap-4 lg:grid-cols-3">
+                {askExamples.map((g) => (
+                  <div key={g.title} className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {g.title}
+                    </p>
+                    {g.prompts.map((p) => (
+                      <Example key={p} text={p} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                <li>
+                  Start with a <span className="font-medium text-foreground">dry run</span> on a new
+                  pair: it connects and reports what would be copied, without writing anything.
+                </li>
+                <li>
+                  Mail is copied, never moved. Options that delete mail are refused, and running the
+                  same pair again skips what is already there.
+                </li>
+                <li>
+                  Jobs run on this server. Closing Claude does not stop them, and they show up under
+                  Running Jobs and History like any other.
+                </li>
+                <li>
+                  Passwords typed into the chat go to the AI provider with the rest of the
+                  conversation. Prefer app passwords you can revoke afterwards, or save the pair as
+                  a profile once and name the profile from then on.
+                </li>
+                <li>
+                  Claude Code asks before anything that changes data. A key without a scope answers
+                  403 for those tools — click Edit on the key to add it.
+                </li>
+              </ul>
             </Step>
           </ol>
           {newKey && (

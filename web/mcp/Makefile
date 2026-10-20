@@ -17,6 +17,7 @@ dist:
 # result into the frontend, where it is served under /downloads/mcp/.
 VERSION := $(shell sed -n 's/^const version = "\(.*\)"/\1/p' main.go)
 downloads: dist
+	cp HUONG_DAN.md dist/
 	./manifest.sh dist $(VERSION)
 
 test:

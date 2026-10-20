@@ -21,5 +21,8 @@ sep=
             "$sep" "$f" "${platform%-*}" "${platform#*-}" "$size" "$sum"
         sep=,
     done
-    printf ']}\n'
+    printf ']'
+    # The setup and usage guide, when the build put it beside the binaries.
+    [ -f HUONG_DAN.md ] && printf ',"guide":"HUONG_DAN.md"'
+    printf '}\n'
 } >manifest.json
