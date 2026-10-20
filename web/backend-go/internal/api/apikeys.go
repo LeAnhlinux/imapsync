@@ -124,6 +124,26 @@ type apiKeyCreated struct {
 	Key string `json:"key"`
 }
 
+// checkScopes returns why a scope list is unacceptable, or "" if it is fine.
+func checkScopes(scopes []string) string {
+	if len(scopes) == 0 {
+		return "Pick at least one scope"
+	}
+	for _, sc := range scopes {
+		if !validScope(sc) {
+			return fmt.Sprintf("Unknown scope %q. Valid: %s", sc, strings.Join(ValidScopes, ", "))
+		}
+	}
+	return ""
+}
+
+func checkRateLimit(n int) string {
+	if n < 1 || n > 10000 {
+		return "rate_limit_per_minute must be between 1 and 10000"
+	}
+	return ""
+}
+
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := s.DB.APIKeysByUser(userFrom(r).ID)
 	if err != nil {
@@ -147,22 +167,15 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "A name is required, so you can tell your keys apart later")
 		return
 	}
-	if len(b.Scopes) == 0 {
-		writeError(w, http.StatusBadRequest, "Pick at least one scope")
+	if msg := checkScopes(b.Scopes); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
-	}
-	for _, sc := range b.Scopes {
-		if !validScope(sc) {
-			writeError(w, http.StatusBadRequest,
-				fmt.Sprintf("Unknown scope %q. Valid: %s", sc, strings.Join(ValidScopes, ", ")))
-			return
-		}
 	}
 	if b.RateLimit <= 0 {
 		b.RateLimit = 60
 	}
-	if b.RateLimit > 10000 {
-		writeError(w, http.StatusBadRequest, "rate_limit_per_minute must be 10000 or less")
+	if msg := checkRateLimit(b.RateLimit); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -187,6 +200,58 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	// The only time the key is ever returned. It is not recoverable after this.
 	writeJSON(w, http.StatusCreated, apiKeyCreated{APIKey: rec, Key: key})
+}
+
+// updateAPIKey changes a key's name, scopes or rate limit in place, so
+// widening or narrowing what an integration may do does not mean issuing a new
+// key and redeploying it. Fields left out of the body are kept.
+func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, ok := urlID(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "API key not found")
+		return
+	}
+	key, err := s.DB.APIKeyByID(id, userFrom(r).ID)
+	if storeErr(w, err, "API key not found") {
+		return
+	}
+	if key.Revoked {
+		writeError(w, http.StatusConflict, "This key has been revoked; create a new one instead")
+		return
+	}
+	var b struct {
+		Name      *string  `json:"name"`
+		Scopes    []string `json:"scopes"`
+		RateLimit *int     `json:"rate_limit_per_minute"`
+	}
+	if !decodeJSON(w, r, &b) {
+		return
+	}
+	if b.Name != nil {
+		if strings.TrimSpace(*b.Name) == "" {
+			writeError(w, http.StatusBadRequest, "A name is required, so you can tell your keys apart later")
+			return
+		}
+		key.Name = strings.TrimSpace(*b.Name)
+	}
+	if b.Scopes != nil {
+		if msg := checkScopes(b.Scopes); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		key.Scopes = strings.Join(b.Scopes, ",")
+	}
+	if b.RateLimit != nil {
+		if msg := checkRateLimit(*b.RateLimit); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		key.RateLimit = *b.RateLimit
+	}
+	if err := s.DB.UpdateAPIKey(key); storeErr(w, err, "API key not found") {
+		return
+	}
+	writeJSON(w, http.StatusOK, key)
 }
 
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {

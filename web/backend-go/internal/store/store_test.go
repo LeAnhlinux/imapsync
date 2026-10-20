@@ -527,3 +527,34 @@ func TestAnyStoredCiphertextFindsSomethingToCheck(t *testing.T) {
 		t.Errorf("got %q, want the stored ciphertext", got)
 	}
 }
+
+func TestUpdateAPIKeyKeepsTheSecretAndOwnership(t *testing.T) {
+	db := open(t)
+	owner, other := user(t, db, "owner"), user(t, db, "other")
+	k := &APIKey{UserID: owner.ID, Name: "bot", Prefix: "isk_abc", Scopes: "sync:read", RateLimit: 60}
+	if err := db.CreateAPIKey(k, "hash-upd"); err != nil {
+		t.Fatal(err)
+	}
+
+	k.Name, k.Scopes, k.RateLimit = "bot-v2", "sync:read,sync:write", 120
+	if err := db.UpdateAPIKey(k); err != nil {
+		t.Fatal(err)
+	}
+	// The same secret still authenticates, now with the new permissions.
+	got, err := db.APIKeyByHash("hash-upd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "bot-v2" || !got.Allows("sync:write") || got.RateLimit != 120 {
+		t.Errorf("update not applied: %+v", got)
+	}
+
+	if _, err := db.APIKeyByID(k.ID, other.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another user's key lookup: %v, want ErrNotFound", err)
+	}
+	stolen := *got
+	stolen.UserID, stolen.Scopes = other.ID, "admin"
+	if err := db.UpdateAPIKey(&stolen); !errors.Is(err, ErrNotFound) {
+		t.Errorf("updating another user's key: %v, want ErrNotFound", err)
+	}
+}

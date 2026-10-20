@@ -165,6 +165,7 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/api-keys", s.listAPIKeys)
 				r.Post("/api-keys", s.createAPIKey)
 				r.Get("/api-keys/scopes", s.listScopes)
+				r.Put("/api-keys/{id}", s.updateAPIKey)
 				r.Post("/api-keys/{id}/revoke", s.revokeAPIKey)
 				r.Delete("/api-keys/{id}", s.deleteAPIKey)
 

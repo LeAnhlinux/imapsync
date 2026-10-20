@@ -27,6 +27,15 @@ export function ApiKeysPage() {
   const [expiresIn, setExpiresIn] = useState(0)
   const [newKey, setNewKey] = useState<string | null>(null)
   const [keyError, setKeyError] = useState('')
+  // Editing changes what an existing key may do without issuing a new one, so
+  // the integration holding it does not have to be redeployed.
+  const [editing, setEditing] = useState<{
+    id: number
+    name: string
+    scopes: string[]
+    rateLimit: number
+  } | null>(null)
+  const [editError, setEditError] = useState('')
 
   const [hookUrl, setHookUrl] = useState('')
   const [hookEvents, setHookEvents] = useState<string[]>(['*'])
@@ -101,6 +110,23 @@ export function ApiKeysPage() {
       reload()
     } catch (err) {
       setKeyError(errorText(err, 'Could not create the key'))
+    }
+  }
+
+  const saveKey = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editing) return
+    setEditError('')
+    try {
+      await apiKeyApi.update(editing.id, {
+        name: editing.name,
+        scopes: editing.scopes,
+        rate_limit_per_minute: editing.rateLimit,
+      })
+      setEditing(null)
+      reload()
+    } catch (err) {
+      setEditError(errorText(err, 'Could not save the key'))
     }
   }
 
@@ -291,15 +317,32 @@ export function ApiKeysPage() {
                   <Td align="right">
                     <div className="flex justify-end gap-2">
                       {!k.revoked && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            act(() => apiKeyApi.revoke(k.id), 'Could not revoke that key.')
-                          }
-                        >
-                          Revoke
-                        </Button>
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditError('')
+                              setEditing({
+                                id: k.id,
+                                name: k.name,
+                                scopes: k.scopes.split(',').filter(Boolean),
+                                rateLimit: k.rate_limit_per_minute,
+                              })
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              act(() => apiKeyApi.revoke(k.id), 'Could not revoke that key.')
+                            }
+                          >
+                            Revoke
+                          </Button>
+                        </>
                       )}
                       <Button
                         size="sm"
@@ -449,6 +492,72 @@ export function ApiKeysPage() {
           </p>
         )}
       </Section>
+
+      {editing && (
+        <Dialog
+          title="Edit API key"
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" form="edit-key">
+                Save
+              </Button>
+            </>
+          }
+        >
+          <form id="edit-key" onSubmit={saveKey} className="mt-3 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              The key itself stays the same — whatever uses it picks up the new permissions on its
+              next request.
+            </p>
+            <div className="grid gap-4">
+              <Field label="Name" htmlFor="edit-key-name">
+                <Input
+                  id="edit-key-name"
+                  value={editing.name}
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  required
+                />
+              </Field>
+              <Field label="Rate limit" htmlFor="edit-key-rate" hint="Requests per minute.">
+                <Input
+                  id="edit-key-rate"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={10000}
+                  value={editing.rateLimit}
+                  onChange={(e) => setEditing({ ...editing, rateLimit: Number(e.target.value) })}
+                />
+              </Field>
+            </div>
+            <fieldset>
+              <legend className="mb-2 text-sm font-medium">Scopes</legend>
+              <div className="flex flex-wrap gap-x-5 gap-y-2.5">
+                {scopes.map((s) => (
+                  <Checkbox
+                    key={s}
+                    label={<code className="font-mono text-xs">{s}</code>}
+                    checked={editing.scopes.includes(s)}
+                    onChange={() =>
+                      toggle(editing.scopes, (v) => setEditing({ ...editing, scopes: v }), s)
+                    }
+                  />
+                ))}
+              </div>
+              {editing.scopes.includes('admin') && (
+                <Alert tone="warning" className="mt-3">
+                  The admin scope also lets the key issue more keys and read every setting.
+                </Alert>
+              )}
+            </fieldset>
+            {editError && <Alert>{editError}</Alert>}
+          </form>
+        </Dialog>
+      )}
 
       {confirmDelete && (
         <Dialog

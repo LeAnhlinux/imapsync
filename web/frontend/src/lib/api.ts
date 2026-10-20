@@ -156,6 +156,8 @@ export const apiKeyApi = {
   // The key itself comes back exactly once, here.
   create: (data: { name: string; scopes: string[]; rate_limit_per_minute: number; expires_in_days: number }) =>
     api.post<ApiKey & { key: string }>('/api-keys', data),
+  update: (id: number, data: { name?: string; scopes?: string[]; rate_limit_per_minute?: number }) =>
+    api.put<ApiKey>(`/api-keys/${id}`, data),
   revoke: (id: number) => api.post(`/api-keys/${id}/revoke`),
   delete: (id: number) => api.delete(`/api-keys/${id}`),
 }

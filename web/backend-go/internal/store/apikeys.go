@@ -121,6 +121,24 @@ func (db *DB) APIKeyByHash(hash string) (*APIKey, error) {
 	return scanAPIKey(db.QueryRow(`SELECT `+apiKeyCols+` FROM api_keys WHERE key_hash=?`, hash))
 }
 
+func (db *DB) APIKeyByID(id, userID int64) (*APIKey, error) {
+	return scanAPIKey(db.QueryRow(`SELECT `+apiKeyCols+` FROM api_keys WHERE id=? AND user_id=?`, id, userID))
+}
+
+// UpdateAPIKey changes what a key may do. The secret itself never changes:
+// the integration holding it keeps working with the new permissions.
+func (db *DB) UpdateAPIKey(k *APIKey) error {
+	res, err := db.Exec(`UPDATE api_keys SET name=?,scopes=?,rate_limit_per_minute=? WHERE id=? AND user_id=?`,
+		k.Name, k.Scopes, k.RateLimit, k.ID, k.UserID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (db *DB) TouchAPIKey(id int64) error {
 	_, err := db.Exec(`UPDATE api_keys SET last_used_at=? WHERE id=?`, NowVN().Format(TimeLayout), id)
 	return err

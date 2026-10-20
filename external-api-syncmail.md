@@ -532,6 +532,7 @@ All of these need the `admin` scope, or a browser session.
 | GET | `/api/api-keys` | list (never includes the keys themselves) |
 | POST | `/api/api-keys` | create; the response is the only place the key appears |
 | GET | `/api/api-keys/scopes` | valid scope names |
+| PUT | `/api/api-keys/{id}` | change name, scopes or rate limit; the key itself is unchanged |
 | POST | `/api/api-keys/{id}/revoke` | stop it working, keep the record |
 | DELETE | `/api/api-keys/{id}` | remove it entirely |
 | GET | `/api/webhooks` | list |
@@ -659,6 +660,7 @@ The API takes mailbox passwords, so:
 | POST | `/api/notifications/test` | `admin` |
 | GET/POST | `/api/api-keys` | `admin` |
 | GET | `/api/api-keys/scopes` | `admin` |
+| PUT | `/api/api-keys/{id}` | `admin` |
 | POST | `/api/api-keys/{id}/revoke` | `admin` |
 | DELETE | `/api/api-keys/{id}` | `admin` |
 | GET/POST | `/api/webhooks` | `admin` |
