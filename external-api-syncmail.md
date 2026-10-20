@@ -4,6 +4,9 @@ HTTP API for driving mailbox migrations from your own programs: start a sync,
 watch it, get told when it finishes. The web frontend is a client of this same
 API, so anything the UI can do, a script can do.
 
+To drive it from Claude or another MCP client instead of code, see
+[`web/mcp`](web/mcp/README.md) — an MCP server built on this API.
+
 - **Base URL** — `https://your-domain/api`
 - **Content type** — `application/json` on every request and response, except
   the one multipart upload endpoint

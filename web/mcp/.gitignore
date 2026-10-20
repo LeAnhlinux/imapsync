@@ -1,0 +1,3 @@
+# Build output, rebuilt by `make`.
+/dist/
+/imapsync-mcp
